@@ -5,20 +5,6 @@ _params = ParamGrid(
         # -------------------------------------------------
         # Positional encoding sweep
         # -------------------------------------------------
-        (
-            (
-                "decoder_type",
-                "decoder_attn_pos_mode",
-            ),
-            (
-                ["sr_transformer", "rope"],
-                ["sr_transformer", "concat_fourier"],
-                ["sr_transformer", "none"],
-            ),
-        ),
-        # Only relevant for concat_fourier; ignored otherwise
-        ("decoder_attn_d_p", [16]),
-        ("decoder_attn_fourier_max_freq", [1.0]),
         # Seeds
         ("seed", [1111, 2222, 3333, 4444, 5555]),
     ]
@@ -58,7 +44,7 @@ _params = ParamGrid(
 # )
 
 
-vstr = "transformer_decoder"
+vstr = "zeyneptrial"
 
 cli = (
     "--env=openfield_map2_fixed_loc3 "
@@ -83,7 +69,7 @@ cli = (
     "--nonlinearity=relu "
     "--rnn_type=gru "
     "--dmlab_extended_action_set=False "
-    "--encoder_conv_architecture=pretrained_resnet "
+    "--encoder_conv_architecture=layer2_resnet18 "
     "--encoder_conv_mlp_layers=256 "
     "--dmlab_one_task_per_worker=True "
     "--set_workers_cpu_affinity=False "
@@ -140,5 +126,5 @@ RUN_DESCRIPTION = RunDescription(f"{vstr}", experiments=_experiments)
 
 
 # Run locally: python -m sample_factory.launcher.run --backend=processes --max_parallel=1 --experiments_per_gpu=1 --num_gpus=1 --run=sf_examples.dmlab.experiments.dmlab30
-# Run on Slurm: python -m sample_factory.launcher.run --backend=slurm --slurm_workdir=./slurm_isaacgym --experiment_suffix=slurm --slurm_gpus_per_job=1 --slurm_cpus_per_gpu=16 --slurm_sbatch_template=./sample_factory/launcher/slurm/sbatch_timeout.sh --pause_between=1 --slurm_print_only=False --run=sf_examples.dmlab.experiments.dmlab30
-# python -m sample_factory.launcher.run --backend=slurm --slurm_workdir=./slurm_grid --slurm_gpus_per_job=0 --slurm_cpus_per_gpu=50 --slurm_sbatch_template=./training_template.sh --pause_between=1 --slurm_print_only=False --run=sf_workingdir.dmlab.experiments.Hipposlam_batch_run_transformer_decoder --slurm_partition=cpu --slurm_timeout=40:10:00
+# Run on Slurm: python -m sample_factory.launcher.run --backend=slurm --slurm_workdir=./slurm_isaacgym --experiment_suffix=slurm --slurm_gpus_per_job=1 --slurm_cpus_per_gpu=16 --slurm_sbatch_template=./template.sh --pause_between=1 --slurm_print_only=False --run=sf_xxl.dmlab.experiments.Hipposlam_batch_run_zeyneptrial
+# python -m sample_factory.launcher.run --backend=slurm --slurm_workdir=./slurm_grid --slurm_gpus_per_job=0 --slurm_cpus_per_gpu=50 --slurm_sbatch_template=./template.sh --pause_between=1 --slurm_print_only=False --run=sf_xxl.dmlab.experiments.Hipposlam_batch_run_zeyneptrial --slurm_partition=cpu --slurm_timeout=40:10:00
