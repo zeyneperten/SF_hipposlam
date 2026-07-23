@@ -94,7 +94,7 @@ function api:start(episode, seed, params)
 
   local current_time = game:episodeTimeSeconds()
   
-  api._episode_start_deadline = current_time + 10
+  api._episode_start_deadline = current_time + (5 * 60) -- 5 minutes to find the first trigger
   api._iti_deadline = nil
   
   print("\n==========================================")
@@ -113,14 +113,14 @@ function api:modifyControl(controls)
           print("[Timeout] Initial startup omission: Failed to find first trigger. Resetting.")
 
           game:console('setviewpos 345 714 25 90')
-          api._episode_start_deadline = current_time + 10 -- Refresh initial window if needed
+          api._episode_start_deadline = current_time + (5 * 60) -- Refresh initial window if needed
       
       -- Find trigger after reward pickup
       elseif api._iti_deadline and current_time > api._iti_deadline then
           print("[Timeout] ITI Omission: Took too long to return to trigger after reward. Resetting.")
 
           game:console('setviewpos 345 714 25 90')
-          api._iti_deadline = current_time + 10
+          api._iti_deadline = current_time + (5 * 60)
       end
       
   end
@@ -185,7 +185,7 @@ function api:pickup(id, playerId)
         api._tr2rw_time = api._reward_time - api._trigger_time
 
         -- ITI: Give the agent a separate window to walk back to the trigger
-        api._iti_deadline = current_time + 10
+        api._iti_deadline = current_time + (5 * 60)
         
         -- PROBABILISTIC REWARD --
         local payout_roll = random:uniformReal(0.0, 1.0)

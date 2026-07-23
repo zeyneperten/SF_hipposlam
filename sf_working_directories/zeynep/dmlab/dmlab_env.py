@@ -10,7 +10,7 @@ from sample_factory.algo.utils.misc import EPISODIC
 from sample_factory.envs.env_wrappers import PixelFormatChwWrapper, RecordingWrapper
 from sample_factory.utils.typing import PolicyID
 from sample_factory.utils.utils import log, static_vars
-from sf_working_directories.default.dmlab.dmlab30 import (
+from sf_working_directories.zeynep.dmlab.dmlab30 import (
     DMLAB30_LEVELS,
     DMLAB30_LEVELS_THAT_USE_LEVEL_CACHE,
     HUMAN_SCORES,
@@ -18,9 +18,9 @@ from sf_working_directories.default.dmlab.dmlab30 import (
     RANDOM_SCORES,
     dmlab30_level_name_to_level,
 )
-from sf_working_directories.default.dmlab.dmlab_gym import DmlabGymEnv, DmlabGymEnv_custom, dmlab_level_to_level_name
-from sf_working_directories.default.dmlab.dmlab_level_cache import DmlabLevelCache, DmlabLevelCaches
-from sf_working_directories.default.dmlab.wrappers.reward_shaping import (
+from sf_working_directories.zeynep.dmlab.dmlab_gym import DmlabGymEnv, DmlabGymEnv_custom, dmlab_level_to_level_name
+from sf_working_directories.zeynep.dmlab.dmlab_level_cache import DmlabLevelCache, DmlabLevelCaches
+from sf_working_directories.zeynep.dmlab.wrappers.reward_shaping import (
     RAW_SCORE_SUMMARY_KEY_SUFFIX,
     DmlabRewardShapingWrapper,
 )
@@ -39,6 +39,7 @@ class DmLabSpec:
 
 
 DMLAB_ENVS = [
+    DmLabSpec("ymaze", "ymaze_vol2"),
     DmLabSpec("openfield_map2_fixed_loc3", "openfield_map2_fixed_loc3"),
     DmLabSpec("openfield_map2_fixed_loc1", "hippodunk/openfield_map2_fixed_loc1"),
     DmLabSpec("openfield_map2_fixed_loc2", "hippodunk/openfield_map2_fixed_loc2"),

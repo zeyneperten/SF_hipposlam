@@ -39,6 +39,7 @@ class DmLabSpec:
 
 
 DMLAB_ENVS = [
+    DmLabSpec("ymaze", "ymaze_vol2"),
     DmLabSpec("openfield_map2_fixed_loc3", "openfield_map2_fixed_loc3"),
     DmLabSpec("openfield_map2_fixed_loc1", "hippodunk/openfield_map2_fixed_loc1"),
     DmLabSpec("openfield_map2_fixed_loc2", "hippodunk/openfield_map2_fixed_loc2"),

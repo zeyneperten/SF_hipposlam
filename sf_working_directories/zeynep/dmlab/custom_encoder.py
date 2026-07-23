@@ -482,7 +482,9 @@ class DepthEncoder(Encoder):
         input_ch = 1
         log.debug("Num input channels for depth encoder: %d", input_ch)
 
-        if cfg.encoder_conv_architecture == "resnet_impala" or cfg.encoder_conv_architecture == "pretrained_resnet":
+        # if "resnet" in cfg.encoder_conv_architecture == "resnet_impala" or cfg.encoder_conv_architecture == "pretrained_resnet":
+
+        if "resnet" in cfg.encoder_conv_architecture:
             # configuration from the IMPALA paper
             resnet_conf = [[16, 2], [32, 2], [32, 2]]
         else:

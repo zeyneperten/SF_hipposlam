@@ -12,13 +12,13 @@ import numpy as np
 
 from sample_factory.utils.typing import PolicyID
 from sample_factory.utils.utils import ensure_dir_exists, log
-from sf_working_directories.default.dmlab.dmlab30 import (
+from sf_working_directories.zeynep.dmlab.dmlab30 import (
     DMLAB_INSTRUCTIONS,
     DMLAB_MAX_INSTRUCTION_LEN,
     DMLAB_VOCABULARY_SIZE,
 )
-from sf_working_directories.default.dmlab.dmlab_level_cache import DmlabLevelCache
-from sf_working_directories.default.dmlab.dmlab_utils import string_to_hash_bucket
+from sf_working_directories.zeynep.dmlab.dmlab_level_cache import DmlabLevelCache
+from sf_working_directories.zeynep.dmlab.dmlab_utils import string_to_hash_bucket
 
 ACTION_SET = (
     (0, 0, 0, 1, 0, 0, 0),  # Forward

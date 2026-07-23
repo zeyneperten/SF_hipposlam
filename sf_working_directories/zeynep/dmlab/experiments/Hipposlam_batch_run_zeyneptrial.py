@@ -7,6 +7,7 @@ _params = ParamGrid(
         # -------------------------------------------------
         # Seeds
         ("seed", [1111, 2222, 3333, 4444, 5555]),
+        # ("seed", [2222]),
     ]
 )
 
@@ -44,10 +45,10 @@ _params = ParamGrid(
 # )
 
 
-vstr = "zeyneptrial"
+vstr = "ymazetrial"
 
 cli = (
-    "--env=openfield_map2_fixed_loc3 "
+    "--env=ymaze "
     f"--wandb_project={vstr} "
     "--seed=42 "
     "--train_for_seconds=144000 "
@@ -69,7 +70,7 @@ cli = (
     "--nonlinearity=relu "
     "--rnn_type=gru "
     "--dmlab_extended_action_set=False "
-    "--encoder_conv_architecture=pretrained_resnet "
+    "--encoder_conv_architecture=layer2_resnet18 "
     "--encoder_conv_mlp_layers=256 "
     "--dmlab_one_task_per_worker=True "
     "--set_workers_cpu_affinity=False "
@@ -93,7 +94,7 @@ cli = (
     "--DG_name=batchnorm_relu "
     "--learning_rate=0.0002 "
     "--fix_encoder_when_load=True "
-    "--encoder_load_path=/home/fr/fr_xl1014/training/best_000025288_203030528_reward_94.185.pth "
+    # "--encoder_load_path=/home/fr/fr_xl1014/training/best_000025288_203030528_reward_94.185.pth "
     "--with_wandb=True "
     "--wandb_user=xiaoxionglin-bernstein-center-freiburg "
     "--pbt_mix_policies_in_one_env=False "
@@ -114,7 +115,7 @@ cli = (
     # "--pbt_perturb_max=1.3 "
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
-    "--decoder_type=sr_transformer "
+    # "--decoder_type=sr_transformer "
 )
 
 
@@ -127,4 +128,4 @@ RUN_DESCRIPTION = RunDescription(f"{vstr}", experiments=_experiments)
 
 # Run locally: python -m sample_factory.launcher.run --backend=processes --max_parallel=1 --experiments_per_gpu=1 --num_gpus=1 --run=sf_examples.dmlab.experiments.dmlab30
 # Run on Slurm: python -m sample_factory.launcher.run --backend=slurm --slurm_workdir=./slurm_isaacgym --experiment_suffix=slurm --slurm_gpus_per_job=1 --slurm_cpus_per_gpu=16 --slurm_sbatch_template=./template.sh --pause_between=1 --slurm_print_only=False --run=sf_xxl.dmlab.experiments.Hipposlam_batch_run_zeyneptrial
-# python -m sample_factory.launcher.run --backend=slurm --slurm_workdir=./slurm_grid --slurm_gpus_per_job=0 --slurm_cpus_per_gpu=50 --slurm_sbatch_template=./template.sh --pause_between=1 --slurm_print_only=False --run=sf_xxl.dmlab.experiments.Hipposlam_batch_run_zeyneptrial --slurm_partition=cpu --slurm_timeout=40:10:00
+# python -m sample_factory.launcher.run --backend=slurm --slurm_workdir=./slurm_grid --slurm_gpus_per_job=0 --slurm_cpus_per_gpu=50 --slurm_sbatch_template=./template.sh --pause_between=1 --slurm_print_only=False --run=sf_working_directories.zeynep.dmlab.experiments.Hipposlam_batch_run_zeyneptrial --slurm_partition=cpu --slurm_timeout=40:10:00
