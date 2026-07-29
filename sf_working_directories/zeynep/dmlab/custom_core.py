@@ -567,7 +567,6 @@ class SimpleSequenceWithBypassCore(ModelCore):
         log.debug(f"get out size called: {self.total_output_size}")
         return self.total_output_size
 
-
 def straight_through_binary(x: Tensor, identity=True):
     x_binary = (x > 0).float()
     if identity:

@@ -315,7 +315,7 @@ class DmlabGymEnv_custom(gym.Env):
             self.main_observation = "RGBD_INTERLEAVED"
             self.num_channels = 4
         self.instructions_observation = DMLAB_INSTRUCTIONS
-        self.with_instructions = with_instructions and not benchmark_mode
+        self.with_instructions = False #with_instructions and not benchmark_mode
         self.with_number_instruction = with_number_instruction
 
         self.action_repeat = action_repeat
@@ -339,11 +339,33 @@ class DmlabGymEnv_custom(gym.Env):
             self.instructions = np.zeros([1], dtype=np.int32)
 
         observation_format = [self.main_observation]
-        if self.with_instructions:
+        if self.with_instructions or self.with_number_instruction:
             observation_format += [self.instructions_observation]
         self.with_pos_obs = with_pos_obs
         if self.with_pos_obs:
             observation_format += ["DEBUG.POS.TRANS", "DEBUG.POS.ROT"]
+
+        #### 1. ADDED THIS BLOCK ###
+        # Ask DeepMind Lab C++ engine for our custom Lua tensors
+        observation_format += [
+            'highrew_hit', 'highrew_miss', 'lowrew_hit', 'lowrew_miss',
+            'highrew_hit_total', 'highrew_miss_total', 'lowrew_hit_total', 'lowrew_miss_total',
+            'adaptation_index'
+        ]
+        
+        # Initialize step-tracking temporary pulse variables
+        self._temp_hi_hit = 0.0
+        self._temp_hi_miss = 0.0
+        self._temp_lo_hit = 0.0
+        self._temp_lo_miss = 0.0
+
+        # Initialize history tracking arrays for local timelines
+        self.hi_hit_history = []
+        self.hi_miss_history = []
+        self.lo_hit_history = []
+        self.lo_miss_history = []
+        self.current_episode_step = 0
+        ###########################
 
         config = {
             "width": self.width,
@@ -450,6 +472,7 @@ class DmlabGymEnv_custom(gym.Env):
 
         instr = env_obs_dict.get(self.instructions_observation)
         self.instructions[:] = 0
+        
         if instr is not None:
             if self.with_number_instruction:
                 # print(instr)
@@ -459,10 +482,26 @@ class DmlabGymEnv_custom(gym.Env):
                 for i, word in enumerate(instr_words):
                     self.instructions[i] = string_to_hash_bucket(word, DMLAB_VOCABULARY_SIZE)
 
-            env_obs_dict[self.instructions_observation] = self.instructions
-        # if self.with_pos_obs:
-        #     env_obs_dict
+        env_obs_dict[self.instructions_observation] = self.instructions
 
+        # --- ADDED PART: EXTRACT AND SANITIZE CUSTOM FLAGS ---
+        # Extract instantaneous frame pulses for step history tracking
+        self._temp_hi_hit = float(env_obs_dict.pop('highrew_hit', [0.0])[0])
+        self._temp_hi_miss = float(env_obs_dict.pop('highrew_miss', [0.0])[0])
+        self._temp_lo_hit = float(env_obs_dict.pop('lowrew_hit', [0.0])[0])
+        self._temp_lo_miss = float(env_obs_dict.pop('lowrew_miss', [0.0])[0])
+
+        # Grab the running totals sent directly from Lua
+        self._total_hi_hit = float(env_obs_dict.pop('highrew_hit_total', [0.0])[0])
+        self._total_hi_miss = float(env_obs_dict.pop('highrew_miss_total', [0.0])[0])
+        self._total_lo_hit = float(env_obs_dict.pop('lowrew_hit_total', [0.0])[0])
+        self._total_lo_miss = float(env_obs_dict.pop('lowrew_miss_total', [0.0])[0])
+
+        self._adaptation_index = float(env_obs_dict.pop('adaptation_index', [0.0])[0])
+        # -----------------------------------------
+
+      # if self.with_pos_obs:
+        #     env_obs_dict
         return env_obs_dict
 
     def reset(self, **kwargs):
@@ -474,6 +513,24 @@ class DmlabGymEnv_custom(gym.Env):
 
         self.dmlab.reset(seed=self.last_reset_seed)
         self.last_observation = self.format_obs_dict(self.dmlab.observations())
+
+        # --- ADDED: Initialize Episode Step Trackers ---
+        self.current_episode_step = 0
+        
+        # History lists for tracking exact step timelines
+        self.hi_hit_history = []
+        self.hi_miss_history = []
+        self.lo_hit_history = []
+        self.lo_miss_history = []
+        # -----------------------------------------------
+
+        # Debugging: Print the expected and actual observation shapes
+        #current_obs = self.last_observation
+        #print("\n=== DEBUGGING SHAPES ===")
+        #print("EXPECTED SPACE:", self.observation_space)
+        #print("ACTUAL OBS SHAPES:", {k: getattr(v, 'shape', type(v)) for k, v in current_obs.items()})
+        #print("========================\n")
+
         return self.last_observation, {}
 
     def step(self, action):
@@ -487,11 +544,48 @@ class DmlabGymEnv_custom(gym.Env):
         terminated = not self.dmlab.is_running()
         truncated = False
 
+        info = {"num_frames": self.action_repeat}
+
+        # --- ADDED: Tick the episode clock ---
+        self.current_episode_step += 1
+        # -------------------------------------
+
         if not terminated:
             obs_dict = self.format_obs_dict(self.dmlab.observations())
             self.last_observation = obs_dict
 
-        info = {"num_frames": self.action_repeat}
+        ###### ADDED Accumulate totals for the WandB graphs #######
+        info["highrew_hit"] = getattr(self, '_temp_hi_hit', 0.0) > 0
+        info["highrew_miss"] = getattr(self, '_temp_hi_miss', 0.0) > 0
+        info["lowrew_hit"] = getattr(self, '_temp_lo_hit', 0.0) > 0
+        info["lowrew_miss"] = getattr(self, '_temp_lo_miss', 0.0) > 0
+
+        if terminated or truncated:
+            if "episode_extra_stats" not in info:
+                info["episode_extra_stats"] = dict()
+
+            # Directly pull the final totals calculated by Lua and feed them to WandB
+            info["episode_extra_stats"]["custom/highrew_hit"] = self._total_hi_hit
+            info["episode_extra_stats"]["custom/highrew_miss"] = self._total_hi_miss
+            info["episode_extra_stats"]["custom/lowrew_hit"] = self._total_lo_hit
+            info["episode_extra_stats"]["custom/lowrew_miss"] = self._total_lo_miss
+
+            info["episode_extra_stats"]["custom/adaptation_index"] = self._adaptation_index
+            
+            # Save raw step histories locally
+            info["hi_hit_history"] = self.hi_hit_history.copy()
+            info["hi_miss_history"] = self.hi_miss_history.copy()
+            info["lo_hit_history"] = self.lo_hit_history.copy()
+            info["lo_miss_history"] = self.lo_miss_history.copy()
+
+            # Reset local step clocks and history
+            self.current_episode_step = 0
+            self.hi_hit_history.clear()
+            self.hi_miss_history.clear()
+            self.lo_hit_history.clear()
+            self.lo_miss_history.clear()
+        ########################################################
+
         return self.last_observation, reward, terminated, truncated, info
 
     def render(self) -> Optional[np.ndarray]:

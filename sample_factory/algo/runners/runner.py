@@ -262,6 +262,7 @@ class Runner(EventLoopObject, Configurable):
     @staticmethod
     def _episodic_stats_handler(runner: Runner, msg: Dict, policy_id: PolicyID) -> None:
         s = msg[EPISODIC]
+
         for _, key, value in iterate_recursively(s):
             if key not in runner.policy_avg_stats:
                 runner.policy_avg_stats[key] = [
@@ -341,6 +342,36 @@ class Runner(EventLoopObject, Configurable):
                 if len(reward_stats) > 0:
                     policy_reward_stats.append((policy_id, f"{np.mean(reward_stats):.3f}"))
             log.debug("Avg episode reward: %r", policy_reward_stats)
+        
+        # --- ADDED CUSTOM LOGGER HERE! ---
+        # Check if any of our four new outcome metrics exist in the rolling statistics buffer
+        if any(k in self.policy_avg_stats for k in ["custom/highrew_hit", "custom/highrew_miss", "custom/lowrew_hit", "custom/lowrew_miss"]):
+            policy_custom_stats = []
+            
+            for policy_id in range(self.cfg.num_policies):
+                # Safely get deques for all four stats, defaulting to empty arrays if they haven't arrived yet
+                hi_hit_stats = self.policy_avg_stats.get("custom/highrew_hit", [[] for _ in range(self.cfg.num_policies)])[policy_id]
+                hi_miss_stats = self.policy_avg_stats.get("custom/highrew_miss", [[] for _ in range(self.cfg.num_policies)])[policy_id]
+                lo_hit_stats = self.policy_avg_stats.get("custom/lowrew_hit", [[] for _ in range(self.cfg.num_policies)])[policy_id]
+                lo_miss_stats = self.policy_avg_stats.get("custom/lowrew_miss", [[] for _ in range(self.cfg.num_policies)])[policy_id]
+                
+                # Calculate means safely
+                hi_hit_mean = np.mean(hi_hit_stats) if len(hi_hit_stats) > 0 else 0.0
+                hi_miss_mean = np.mean(hi_miss_stats) if len(hi_miss_stats) > 0 else 0.0
+                lo_hit_mean = np.mean(lo_hit_stats) if len(lo_hit_stats) > 0 else 0.0
+                lo_miss_mean = np.mean(lo_miss_stats) if len(lo_miss_stats) > 0 else 0.0
+
+                # If we have data for this policy, append it to our display summary
+                if len(hi_hit_stats) > 0 or len(hi_miss_stats) > 0 or len(lo_hit_stats) > 0 or len(lo_miss_stats) > 0:
+                    stat_string = (
+                        f"Hi-Hit: {hi_hit_mean:.2f} | Hi-Miss (Unlucky): {hi_miss_mean:.2f} | "
+                        f"Lo-Hit (Lucky): {lo_hit_mean:.2f} | Lo-Miss: {lo_miss_mean:.2f}"
+                    )
+                    policy_custom_stats.append((policy_id, stat_string))
+            
+            if len(policy_custom_stats) > 0:
+                log.debug("Avg hit/miss stats: %r", policy_custom_stats)
+        # ------------------------------------
 
     def _update_stats_and_print_report(self):
         """

@@ -603,6 +603,13 @@ class HipposlamEncoder(Encoder):
         # self.lstm_c0 = nn.Parameter(initial_hidden_values, requires_grad=True)
 
         self.encoder_out_size += self.instructions_lstm_units
+
+        #### added ####
+        self.with_pos_obs = getattr(cfg, "with_pos_obs", False)
+        if self.with_pos_obs:
+            self.encoder_out_size += 6 # 3 for pos, 3 for rot
+        ###############    
+
         log.info("DMLab policy head output size: %r", self.encoder_out_size)
 
         if cfg.DG_lr:
@@ -659,10 +666,10 @@ class HipposlamEncoder(Encoder):
         bypass_features = 0
         bypass_features = self.encoder_out_size
         if hasattr(cfg, "depth_sensor"):
-            log.info(f"denpth_sensor {cfg.depth_sensor}")
-            if self.depth_sensor:
-                log.info(f"denpth_sensor {self.depth_sensor}")
-                bypass_features = self.depth_encoder.get_out_size() + self.instructions_lstm_units
+           log.info(f"denpth_sensor {cfg.depth_sensor}")
+           if self.depth_sensor:
+               log.info(f"denpth_sensor {self.depth_sensor}")
+               bypass_features = self.depth_encoder.get_out_size() + self.instructions_lstm_units
 
         self.bypass = False
         if cfg.core_name.startswith("Bypass"):  # "Gate":
@@ -671,6 +678,8 @@ class HipposlamEncoder(Encoder):
             log.info(f"using bypass, dim {bypass_features}")
 
         self.encoder_out_size = tmp_out_size
+        #log.info(f"!!! DEBUG: INIT CALCULATED SIZE: {self.encoder_out_size} !!!")
+        #log.info(f"!!! DEBUG: bypass SIZE: {bypass_features} !!!")
         self.cpu_device = torch.device("cpu")
 
         # log.info("=================================== memory=========================")
@@ -704,7 +713,7 @@ class HipposlamEncoder(Encoder):
         if self.with_number_instruction:
             instr = obs_dict[DMLAB_INSTRUCTIONS]
             last_outputs = (
-                torch.nn.functional.one_hot(instr.squeeze(1) - 1, num_classes=3) * self.number_instruction_coef
+                torch.nn.functional.one_hot(torch.clamp(instr.squeeze(1) - 1, min=0).long(), num_classes=3) * self.number_instruction_coef #torch.nn.functional.one_hot(instr.squeeze(1) - 1, num_classes=3) * self.number_instruction_coef
             )
 
             # log.info(last_outputs)
@@ -735,15 +744,16 @@ class HipposlamEncoder(Encoder):
         last_outputs = last_outputs.to(x.device)  # for some reason this is very slow
 
         x = torch.cat((x, last_outputs), dim=1)
-
+        
         tmp_out = self.DG_projection(x)
-        # log.info(tmp_out)
+        # log.info(tmp_out) (this was already commented out in the original code) 
+        
         if self.depth_sensor:
-            depth_out = self.depth_encoder(obs_dict["obs"][:, -1:, :, :])
-            depth_out = depth_out.view(obs_dict["obs"].size(0), -1)
-            bypass_out = torch.cat((depth_out, last_outputs), dim=1)
+           depth_out = self.depth_encoder(obs_dict["obs"][:, -1:, :, :])
+           depth_out = depth_out.view(obs_dict["obs"].size(0), -1)
+           bypass_out = torch.cat((depth_out, last_outputs), dim=1)
         else:
-            bypass_out = x
+           bypass_out = x
 
         if self.bypass:
             tmp_out = torch.cat((tmp_out, bypass_out), dim=1)
