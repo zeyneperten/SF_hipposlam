@@ -444,8 +444,8 @@ class DmlabGymEnv_custom(gym.Env):
         self.observation_space.spaces["reward_input"] = gym.spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=[1],
-            dtype=np.int32,
+            shape=(1,),
+            dtype=np.float32,
         )
         ###########
 
@@ -482,7 +482,17 @@ class DmlabGymEnv_custom(gym.Env):
         instr = env_obs_dict.get(self.instructions_observation)
         self.instructions[:] = 0
         
-        env_obs_dict['reward_input'] = env_obs_dict.pop("reward_input", [0.0])[0] ## ADDED to pass reward_input from Lua to Python
+        ## ADDED to pass reward_input from Lua to Python
+        reward_input = env_obs_dict.pop(
+            "reward_input",
+            np.zeros((1,), dtype=np.float32),
+        )
+
+        env_obs_dict["reward_input"] = np.asarray(
+            reward_input,
+            dtype=np.float32,
+        ).reshape(1) 
+        ##########################################
 
         if instr is not None:
             if self.with_number_instruction:
