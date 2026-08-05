@@ -354,23 +354,35 @@ class Runner(EventLoopObject, Configurable):
                 hi_miss_stats = self.policy_avg_stats.get("custom/highrew_miss", [[] for _ in range(self.cfg.num_policies)])[policy_id]
                 lo_hit_stats = self.policy_avg_stats.get("custom/lowrew_hit", [[] for _ in range(self.cfg.num_policies)])[policy_id]
                 lo_miss_stats = self.policy_avg_stats.get("custom/lowrew_miss", [[] for _ in range(self.cfg.num_policies)])[policy_id]
-                
+
+                # --- NEW COUNTING LOGIC FOR BLOCKS ---
+                block_stats = self.policy_avg_stats.get("custom/instr_switch", [[] for _ in range(self.cfg.num_policies)])[policy_id] ## block stats of last 100 episodes as defaulted stats_avg in cfg.py
+                total_tracked = len(block_stats)
+                if total_tracked > 0:
+                    # Count how many items in the list are Baseline (1.0) vs Reversed (2.0)
+                    baseline_count = sum(1 for val in block_stats if val < 1.5)
+                    reversed_count = sum(1 for val in block_stats if val >= 1.5)
+                    
+                    distribution_str = f"[{baseline_count}/{total_tracked} High at R | {reversed_count}/{total_tracked} High at L]"
+                # --------------------------
+
                 # Calculate means safely
                 hi_hit_mean = np.mean(hi_hit_stats) if len(hi_hit_stats) > 0 else 0.0
                 hi_miss_mean = np.mean(hi_miss_stats) if len(hi_miss_stats) > 0 else 0.0
                 lo_hit_mean = np.mean(lo_hit_stats) if len(lo_hit_stats) > 0 else 0.0
                 lo_miss_mean = np.mean(lo_miss_stats) if len(lo_miss_stats) > 0 else 0.0
 
-                # If we have data for this policy, append it to our display summary
+                # Average count of hits/misses per the last 100 episodes from the deque
                 if len(hi_hit_stats) > 0 or len(hi_miss_stats) > 0 or len(lo_hit_stats) > 0 or len(lo_miss_stats) > 0:
                     stat_string = (
+                        f" BLOCK DIST: {distribution_str} | "
                         f"Hi-Hit: {hi_hit_mean:.2f} | Hi-Miss (Unlucky): {hi_miss_mean:.2f} | "
                         f"Lo-Hit (Lucky): {lo_hit_mean:.2f} | Lo-Miss: {lo_miss_mean:.2f}"
                     )
                     policy_custom_stats.append((policy_id, stat_string))
             
             if len(policy_custom_stats) > 0:
-                log.debug("Avg hit/miss stats: %r", policy_custom_stats)
+                log.debug("Custom stats: %r", policy_custom_stats)
         # ------------------------------------
 
     def _update_stats_and_print_report(self):

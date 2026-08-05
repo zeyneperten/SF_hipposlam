@@ -61,9 +61,9 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
         
 
         # optimistic asymmetric clipping from IMPALA paper
-        squeezed = tanh(rew / 5.0)
-        clipped = 0.3 * squeezed if rew < 0.0 else squeezed
-        rew = clipped * 5.0
+        #squeezed = tanh(rew / 5.0)
+        #clipped = 0.3 * squeezed if rew < 0.0 else squeezed
+        #rew = clipped * 5.0
 
         if done:
             score = self.raw_episode_return
@@ -84,8 +84,6 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
             )
 
             ## ADDED ##
-            # 1. Capture any extra stats coming up from the environment
-            # --- PACKAGE TOTALS FOR WANDB ---
             #log.warning(
             #    "🏁 EPISODE FINISHED | Final Totals -> Hi-Hit: %s | Hi-Miss: %s | Lo-Hit: %s | Lo-Miss: %s",
             #    self.hi_hit_count, self.hi_miss_count, self.lo_hit_count, self.lo_miss_count
@@ -96,7 +94,8 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
             info["episode_extra_stats"]["custom/lowrew_hit"] = float(self.lo_hit_count)
             info["episode_extra_stats"]["custom/lowrew_miss"] = float(self.lo_miss_count)
 
-            info["episode_extra_stats"]["custom/adaptation_index"] = existing_extra_stats.get("custom/adaptation_index", 0.0)
+            info["episode_extra_stats"]["custom/flexibility"] = existing_extra_stats.get("custom/flexibility", 0.0)
+            info["episode_extra_stats"]["custom/instr_switch"] = existing_extra_stats.get("custom/instr_switch", 1)
             
             # --- PACKAGE TIMELINES FOR YOUR LOCAL THESIS DATA ---
             info["hi_hit_history"] = self.hi_hit_history.copy()

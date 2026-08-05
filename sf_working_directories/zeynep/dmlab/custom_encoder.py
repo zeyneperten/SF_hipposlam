@@ -574,6 +574,8 @@ class HipposlamEncoder(Encoder):
         self.basic_encoder = make_img_encoder(cfg, obs_cnn)
         self.encoder_out_size = self.basic_encoder.get_out_size()
 
+        self.INSTR_embedding = cfg.INSTR_embedding ## ADDED ## 
+
         self.with_number_instruction = cfg.with_number_instruction
         self.number_instruction_coef = getattr(cfg, "number_instruction_coef", 1)
         if self.with_number_instruction:
@@ -602,13 +604,21 @@ class HipposlamEncoder(Encoder):
         # self.lstm_h0 = nn.Parameter(initial_hidden_values, requires_grad=True)
         # self.lstm_c0 = nn.Parameter(initial_hidden_values, requires_grad=True)
 
-        self.encoder_out_size += self.instructions_lstm_units
+        self.encoder_out_size += self.instructions_lstm_units 
 
-        #### added ####
-        self.with_pos_obs = getattr(cfg, "with_pos_obs", False)
-        if self.with_pos_obs:
-            self.encoder_out_size += 6 # 3 for pos, 3 for rot
-        ###############    
+        ### ADDED reward_input to the encoder output, so that we can use it for DG projection ###
+        # Number of scalar features for reward input (e.g. 1 float)
+        self.reward_input_dim = 1
+
+        # We will concatenate it to x + instructions before DG_projection   
+        self.encoder_out_size += self.reward_input_dim
+        ##########################################################################################
+
+        # ADDED subtract the instruction size if we are multiplying, otherwise DG_projection will be the wrong size
+        if self.INSTR_embedding == "multiply":
+             self.encoder_out_size -= self.instructions_lstm_units
+             self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
+        ###################################################################################################
 
         log.info("DMLab policy head output size: %r", self.encoder_out_size)
 
@@ -708,15 +718,30 @@ class HipposlamEncoder(Encoder):
             obs_cnn = obs_dict["obs"][:, :3, :, :]
         else:
             obs_cnn = obs_dict["obs"][:, :, :, :]
-        x = self.basic_encoder(obs_cnn)
+        x = self.basic_encoder(obs_cnn) # this is the visual features
+
+        ## ADDED ##
+        reward_feat = obs_dict["reward_input"]
+        if reward_feat.dim() == 1:
+            reward_feat = reward_feat.unsqueeze(1) 
+        reward_feat = reward_feat.to(x.device)
+        x_combined = torch.cat((x, last_outputs, reward_feat), dim=1)
+        ###########
 
         if self.with_number_instruction:
             instr = obs_dict[DMLAB_INSTRUCTIONS]
+
+            # --- ADDED: Extract the actual instruction values for logging ---
+            # instr is shape [batch_size, 1], squeeze it to 1D and convert to list/cpu
+            #current_instructions = instr.squeeze(1).long().tolist()
+            #####
+
             last_outputs = (
                 torch.nn.functional.one_hot(torch.clamp(instr.squeeze(1) - 1, min=0).long(), num_classes=3) * self.number_instruction_coef #torch.nn.functional.one_hot(instr.squeeze(1) - 1, num_classes=3) * self.number_instruction_coef
             )
 
-            # log.info(last_outputs)
+            #log.info(last_outputs) # this should be a tensor of shape [batch_size, 3] with one-hot encoding of the instruction number
+            #log.info(f"Batch Instructions: {current_instructions} | Encoded Shape: {last_outputs.shape}")
 
         else:
 
@@ -743,11 +768,24 @@ class HipposlamEncoder(Encoder):
 
         last_outputs = last_outputs.to(x.device)  # for some reason this is very slow
 
-        x = torch.cat((x, last_outputs), dim=1)
-        
-        tmp_out = self.DG_projection(x)
+        ## ADDED put concatanation and tmp_out = DG_projection inside a condition ##
+        if self.INSTR_embedding == "concatanate":
+            x = torch.cat((x, last_outputs), dim=1) # write a condition so that when such an argument is added to command line it concatantes the instr to visual features
+            tmp_out = self.DG_projection(x_combined) # default was x but we combined it with reward feature
+
+        elif self.INSTR_embedding == "multiply":   
+            # embed instructions to the same dimension as DG_projection output with a linear layer, then multiply to modulate the features
+            # x is just visual features. DG_projection works because we fixed the size in __init__
+            tmp_out = self.DG_projection(x_combined) 
+            # Use the layer we stored in memory in __init__
+            embedded_instr = self.instruction_embed_layer(last_outputs)
+            
+            # Contextual modulation
+            tmp_out = tmp_out * embedded_instr
+        #######
+
         # log.info(tmp_out) (this was already commented out in the original code) 
-        
+
         if self.depth_sensor:
            depth_out = self.depth_encoder(obs_dict["obs"][:, -1:, :, :])
            depth_out = depth_out.view(obs_dict["obs"].size(0), -1)

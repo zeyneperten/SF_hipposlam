@@ -3,7 +3,7 @@ import sys
 from sample_factory.enjoy import enjoy
 
 # from sf_examples.dmlab.cumstom_enjoy import enjoy
-from sf_working_directories.default.dmlab.train_hipposlam import parse_dmlab_args, register_dmlab_components
+from sf_working_directories.zeynep.dmlab.train_hipposlam import parse_dmlab_args, register_dmlab_components
 
 
 def main():

@@ -67,6 +67,7 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         type=bool,
         help="when loading an encoder, fix its weights at initialization",
     )
+    p.add_argument("--INSTR_embedding", default="concatanate", type=str, choices=["concatanate", "multiply"], help="How to embed the instruction input to visual features.") ## ADDED ##
     p.add_argument("--depth_sensor", default=False, type=bool, help="having extra depth sensor")
     p.add_argument(
         "--dmlab_reduced_action_set", default=False, type=bool, help="reduced action set to facilitate learning"

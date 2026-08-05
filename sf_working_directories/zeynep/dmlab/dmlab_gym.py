@@ -350,7 +350,7 @@ class DmlabGymEnv_custom(gym.Env):
         observation_format += [
             'highrew_hit', 'highrew_miss', 'lowrew_hit', 'lowrew_miss',
             'highrew_hit_total', 'highrew_miss_total', 'lowrew_hit_total', 'lowrew_miss_total',
-            'adaptation_index'
+            'flexibility', 'reward_input'
         ]
         
         # Initialize step-tracking temporary pulse variables
@@ -440,6 +440,15 @@ class DmlabGymEnv_custom(gym.Env):
                 shape=[3],
                 dtype=np.float64,
             )
+        ## ADDED ##
+        self.observation_space.spaces["reward_input"] = gym.spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=[1],
+            dtype=np.int32,
+        )
+        ###########
+
         # if self.depth_sensor:
         #     self.observation_space.spaces['depth'] = gym.spaces.Box(
         #         low=0,
@@ -473,10 +482,13 @@ class DmlabGymEnv_custom(gym.Env):
         instr = env_obs_dict.get(self.instructions_observation)
         self.instructions[:] = 0
         
+        env_obs_dict['reward_input'] = env_obs_dict.pop("reward_input", [0.0])[0] ## ADDED to pass reward_input from Lua to Python
+
         if instr is not None:
             if self.with_number_instruction:
                 # print(instr)
                 self.instructions[0] = int(instr)
+                self._last_instruction = self.instructions[0] #### ADDED to track instruction switch
             else:
                 instr_words = instr.split()
                 for i, word in enumerate(instr_words):
@@ -484,7 +496,7 @@ class DmlabGymEnv_custom(gym.Env):
 
         env_obs_dict[self.instructions_observation] = self.instructions
 
-        # --- ADDED PART: EXTRACT AND SANITIZE CUSTOM FLAGS ---
+        # --- ADDED PART: EXTRACT CUSTOM FLAGS FROM OBSERVATION AND KEEP THEM LOCALLY TO ADD INTO INFO ---
         # Extract instantaneous frame pulses for step history tracking
         self._temp_hi_hit = float(env_obs_dict.pop('highrew_hit', [0.0])[0])
         self._temp_hi_miss = float(env_obs_dict.pop('highrew_miss', [0.0])[0])
@@ -497,7 +509,7 @@ class DmlabGymEnv_custom(gym.Env):
         self._total_lo_hit = float(env_obs_dict.pop('lowrew_hit_total', [0.0])[0])
         self._total_lo_miss = float(env_obs_dict.pop('lowrew_miss_total', [0.0])[0])
 
-        self._adaptation_index = float(env_obs_dict.pop('adaptation_index', [0.0])[0])
+        self._flexibility = float(env_obs_dict.pop('flexibility', [0.0])[0])
         # -----------------------------------------
 
       # if self.with_pos_obs:
@@ -554,7 +566,7 @@ class DmlabGymEnv_custom(gym.Env):
             obs_dict = self.format_obs_dict(self.dmlab.observations())
             self.last_observation = obs_dict
 
-        ###### ADDED Accumulate totals for the WandB graphs #######
+        ###### ADDED Accumulate totals for the WandB graphs INTO INFO #######
         info["highrew_hit"] = getattr(self, '_temp_hi_hit', 0.0) > 0
         info["highrew_miss"] = getattr(self, '_temp_hi_miss', 0.0) > 0
         info["lowrew_hit"] = getattr(self, '_temp_lo_hit', 0.0) > 0
@@ -570,7 +582,9 @@ class DmlabGymEnv_custom(gym.Env):
             info["episode_extra_stats"]["custom/lowrew_hit"] = self._total_lo_hit
             info["episode_extra_stats"]["custom/lowrew_miss"] = self._total_lo_miss
 
-            info["episode_extra_stats"]["custom/adaptation_index"] = self._adaptation_index
+            info["episode_extra_stats"]["custom/flexibility"] = self._flexibility
+
+            info["episode_extra_stats"]["custom/instr_switch"] = self._last_instruction 
             
             # Save raw step histories locally
             info["hi_hit_history"] = self.hi_hit_history.copy()
