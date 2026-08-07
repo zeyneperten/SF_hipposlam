@@ -9,6 +9,9 @@ from sample_factory.model.core import ModelCore, ModelCoreIdentity, ModelCoreRNN
 from sample_factory.utils.typing import Config
 from sample_factory.utils.utils import log
 
+from sf_working_directories.zeynep.dmlab.custom_weights_DGFeedback import generate_shift_register_weights, configure_fixed_dg_feedback_rnn
+from sf_working_directories.zeynep.dmlab.custom_rnn_DGFeedback import CustomRNN
+
 
 class FixedRNNSequenceCore(ModelCore):
     def __init__(self, cfg, input_size):
@@ -252,6 +255,147 @@ class FixedRNNWithBypassCore(ModelCore):
 
                 concat_hidden = new_hidden
 
+            return concat_output, concat_hidden
+
+### ADDED ###
+class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
+    def __init__(self, cfg, input_size):
+        super().__init__(cfg)
+        self.R = getattr(cfg, "Hippo_R", 8)
+        self.L = getattr(cfg, "Hippo_L", 48)
+        self.Hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64)
+
+        if input_size < self.Hippo_n_feature:
+            raise Warning(f"Input size {input_size} must be at least Hippo_n_feature ({self.Hippo_n_feature})")
+        
+        self.bypass_size = input_size - self.Hippo_n_feature
+        log.debug(f"bypass size: {self.bypass_size}")
+
+        # The total register length.
+        self.expanded_length = self.R + self.L - 1  
+        # The flattened hidden state dimension (RNN core output).
+        self.n_feature = self.Hippo_n_feature
+        self.hidden_size = self.n_feature * self.expanded_length
+        #self.core_output_size = self.Hippo_n_feature * self.expanded_length + self.bypass_size
+
+        ## can instead use this:
+        self.core_output_size = self.hidden_size
+        self.total_output_size = self.hidden_size + self.bypass_size
+
+        # Create an RNN with ReLU activation.
+        # It has fixed W_in and W_hh buffers, and one learned parameter:
+        # lr_row = W_feedback.
+        self.rnn = CustomRNN(
+            input_size=self.n_feature,
+            hidden_size=self.hidden_size,
+            nonlinearity="relu",
+            batch_first=False,
+            bias=False,
+        )
+
+        # Create fixed shift-register weights for DG->CA3 and CA3->CA3.
+        W_in, W_hh = generate_shift_register_weights(
+            n_feature=self.n_feature,
+            register_length=self.expanded_length,
+            injection_width=self.R,
+        )
+        configure_fixed_dg_feedback_rnn(self.rnn, W_in, W_hh)
+
+        # log.debug(f"weights: { W_ih, W_hh}")
+
+        log.debug(
+            "USED DG FEEDBACK LORA: "
+            "W_hh_eff = W_hh + W_in @ W_feedback; "
+            f"feedback parameters={self.rnn.lr_row.numel()}"
+        )
+    
+    def forward(self, head_output, rnn_states):
+        """
+        Args:
+            head_output: Either a Tensor of shape (B, input_size) or a PackedSequence.
+            rnn_states: Tensor of shape (B, core_output_size) representing the flattened recurrent state.
+        Returns:
+            Tuple (concat_output, new_rnn_states) where:
+              - concat_output is the concatenation of the fixed RNN output and the bypass features.
+              - new_rnn_states is the updated recurrent state.
+        """
+        # Prepare initial hidden state for RNN.
+        h0 = rnn_states.unsqueeze(0)[:, :, : self.hidden_size].contiguous()
+
+        if isinstance(head_output, PackedSequence):
+            # Concatenate along the feature dimension.
+            dg_data = head_output.data[:, :self.n_feature] # DG forward representation 
+            bypass_data = head_output.data[:, self.n_feature:] if self.bypass_size > 0 else None # Features that bypass CA3
+            
+            # Packed DG input for CA3 RNN
+            dg_packed = PackedSequence(
+                dg_data,
+                head_output.batch_sizes,
+                head_output.sorted_indices,
+                head_output.unsorted_indices,
+            )
+
+            ca3_output_packed, new_hidden = self.rnn(dg_packed, h0)
+            new_hidden = new_hidden.squeeze(0) # Final CA3 hidden state after processing the sequence
+
+            if bypass_data is not None:
+                concatenated_data = torch.cat([ca3_output_packed.data, bypass_data], dim=1,)
+
+                bypass_data_packed = PackedSequence(
+                    bypass_data,
+                    head_output.batch_sizes,
+                    head_output.sorted_indices,
+                    head_output.unsorted_indices,
+                )
+                # Assume 'packed' is your PackedSequence and you used batch_first=True when packing.
+                padded, lengths = pad_packed_sequence(bypass_data_packed, batch_first=True,)
+
+                # For each sequence in the batch, pick the last valid time step.
+                # lengths is a tensor of the original sequence lengths.
+                last_inputs = padded[torch.arange(padded.size(0), device=padded.device), lengths - 1, :,]
+                concatenated_data_hidden = torch.cat([new_hidden, last_inputs], dim=1,)
+
+            else:
+                concatenated_data = ca3_output_packed.data
+                concatenated_data_hidden = new_hidden
+
+            concat_output = PackedSequence(
+                concatenated_data,
+                ca3_output_packed.batch_sizes,
+                ca3_output_packed.sorted_indices,
+                ca3_output_packed.unsorted_indices,
+            )
+
+            # Preserve the original return convention 
+            concat_hidden = PackedSequence(
+                concatenated_data_hidden,
+                ca3_output_packed.batch_sizes,
+                ca3_output_packed.sorted_indices,
+                ca3_output_packed.unsorted_indices,
+            )
+
+            return concat_output, concat_hidden
+        else:
+            # For Tensor input.
+            # Split the input into RNN and bypass parts.
+            dg_input = head_output[:, :self.n_feature]  # shape: (B, n_feature)
+            bypass_output = head_output[:, self.n_feature:] if self.bypass_size > 0 else None
+            
+            # Add sequence dimension for the RNN.
+            dg_input = dg_input.unsqueeze(0)  # shape: (1, B, n_feature)
+            ca3_output, new_hidden = self.rnn(dg_input, h0)
+            new_hidden = new_hidden.squeeze(0)   # shape: (B, core_output_size)
+            ca3_output = ca3_output.squeeze(0)     # shape: (B, core_output_size)
+            
+            # Concatenate the RNN output with bypass features.
+            if bypass_output is not None:
+                concat_output = torch.cat([ca3_output, bypass_output], dim=1)
+                concat_hidden = torch.cat([new_hidden, bypass_output], dim=1)
+            else:
+                concat_output = ca3_output
+
+                concat_hidden = new_hidden
+            
             return concat_output, concat_hidden
 
 
@@ -1360,6 +1504,9 @@ def make_hipposlam_core(cfg: Config, core_input_size: int) -> ModelCore:
             core = SimpleSequenceWithBypassCore_binary(cfg, core_input_size)
         elif cfg.core_name == "Default":
             core = ModelCoreRNN(cfg, core_input_size)
+        elif cfg.core_name == "DGFeebackLORA":
+            core = FixedRNNWithBypassCoreDGFeedbackLORA(cfg, core_input_size)
+
     else:
         core = ModelCoreIdentity(cfg, core_input_size)
 
