@@ -9,7 +9,7 @@ from sample_factory.model.core import ModelCore, ModelCoreIdentity, ModelCoreRNN
 from sample_factory.utils.typing import Config
 from sample_factory.utils.utils import log
 
-from sf_working_directories.zeynep.dmlab.custom_weights_DGFeedback import generate_shift_register_weights, configure_fixed_dg_feedback_rnn
+from sf_working_directories.zeynep.dmlab.custom_weights_DGFeedback import generate_shift_register_weights
 from sf_working_directories.zeynep.dmlab.custom_rnn_DGFeedback import CustomRNN
 
 
@@ -261,9 +261,9 @@ class FixedRNNWithBypassCore(ModelCore):
 class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
     def __init__(self, cfg, input_size):
         super().__init__(cfg)
-        self.R = getattr(cfg, "Hippo_R", 8)
-        self.L = getattr(cfg, "Hippo_L", 48)
-        self.Hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64)
+        self.R = getattr(cfg, "Hippo_R", 8) # initial register length that recieves current DG feature
+        self.L = getattr(cfg, "Hippo_L", 48) # memory related length param
+        self.Hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64) # number of DG channels
 
         if input_size < self.Hippo_n_feature:
             raise Warning(f"Input size {input_size} must be at least Hippo_n_feature ({self.Hippo_n_feature})")
@@ -272,23 +272,25 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
         log.debug(f"bypass size: {self.bypass_size}")
 
         # The total register length.
-        self.expanded_length = self.R + self.L - 1  
+        self.expanded_length = self.R + self.L - 1  # number of CA3 register slots for each feature
         # The flattened hidden state dimension (RNN core output).
-        self.n_feature = self.Hippo_n_feature
-        self.hidden_size = self.n_feature * self.expanded_length
+        self.n_feature = self.Hippo_n_feature # number of DG feature channels that CA3 recieves
+        self.hidden_size = self.n_feature * self.expanded_length # CA3 recurrent state
         #self.core_output_size = self.Hippo_n_feature * self.expanded_length + self.bypass_size
 
-        ## can instead use this:
-        self.core_output_size = self.hidden_size
-        self.total_output_size = self.hidden_size + self.bypass_size
+        ## instead use this:
+        self.core_output_size = self.hidden_size # CA3 only hidden states
+        self.total_output_size = self.hidden_size + self.bypass_size # full output given to decoder
 
         # Create an RNN with ReLU activation.
         # It has fixed W_in and W_hh buffers, and one learned parameter:
         # lr_row = W_feedback.
         self.rnn = CustomRNN(
-            input_size=self.n_feature,
-            hidden_size=self.hidden_size,
+            input_size=self.n_feature, # DG Feature vector (B, n_feature)
+            hidden_size=self.hidden_size, # CA3 shift-register memory (B, hidden_size)
+            num_layers=1,
             nonlinearity="relu",
+            rank=self.n_feature, # LoRA rank for the feedback matrix W_feedback
             batch_first=False,
             bias=False,
         )
@@ -299,7 +301,8 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
             register_length=self.expanded_length,
             injection_width=self.R,
         )
-        configure_fixed_dg_feedback_rnn(self.rnn, W_in, W_hh)
+        
+        self.rnn.set_fixed_weights(W_in, W_hh)
 
         # log.debug(f"weights: { W_ih, W_hh}")
 
@@ -313,7 +316,7 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
         """
         Args:
             head_output: Either a Tensor of shape (B, input_size) or a PackedSequence.
-            rnn_states: Tensor of shape (B, core_output_size) representing the flattened recurrent state.
+            rnn_states: Tensor of shape (B, total_output_size) representing the flattened recurrent state.
         Returns:
             Tuple (concat_output, new_rnn_states) where:
               - concat_output is the concatenation of the fixed RNN output and the bypass features.
@@ -397,6 +400,9 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
                 concat_hidden = new_hidden
             
             return concat_output, concat_hidden
+
+    def get_out_size(self) -> int:
+        return self.total_output_size
 
 
 class SimpleSequenceCore(ModelCore):

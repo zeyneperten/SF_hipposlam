@@ -159,6 +159,7 @@ def make_dmlab_env_impl(
         reduced_action_set=cfg.dmlab_reduced_action_set,
         with_number_instruction=cfg.with_number_instruction,
         with_pos_obs=cfg.with_pos_obs,
+        reward_input=cfg.reward_input,
     )
 
     if env_config and "env_id" in env_config:

@@ -302,6 +302,7 @@ class DmlabGymEnv_custom(gym.Env):
         reduced_action_set=False,
         with_number_instruction=True,
         with_pos_obs=False,
+        reward_input = False,
     ):
 
         # self.depth_sensor = depth_sensor
@@ -349,9 +350,17 @@ class DmlabGymEnv_custom(gym.Env):
         # Ask DeepMind Lab C++ engine for our custom Lua tensors
         observation_format += [
             'highrew_hit', 'highrew_miss', 'lowrew_hit', 'lowrew_miss',
-            'highrew_hit_total', 'highrew_miss_total', 'lowrew_hit_total', 'lowrew_miss_total',
-            'flexibility', 'reward_input'
+            'highrew_hit_total', 'highrew_miss_total',
+            'lowrew_hit_total', 'lowrew_miss_total',
+            'flexibility'
         ]
+
+        self.reward_input = reward_input
+        if not self.reward_input:
+            log.debug("REWARD INPUT IS DISABLED")
+        else:
+            log.debug("REWARD INPUT IS ENABLED")
+            observation_format += ["reward_input"]
         
         # Initialize step-tracking temporary pulse variables
         self._temp_hi_hit = 0.0
@@ -441,12 +450,13 @@ class DmlabGymEnv_custom(gym.Env):
                 dtype=np.float64,
             )
         ## ADDED ##
-        self.observation_space.spaces["reward_input"] = gym.spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(1,),
-            dtype=np.float32,
-        )
+        if self.reward_input:
+            self.observation_space.spaces["reward_input"] = gym.spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(1,),
+                dtype=np.float32,
+            )
         ###########
 
         # if self.depth_sensor:
@@ -483,15 +493,16 @@ class DmlabGymEnv_custom(gym.Env):
         self.instructions[:] = 0
         
         ## ADDED to pass reward_input from Lua to Python
-        reward_input = env_obs_dict.pop(
-            "reward_input",
-            np.zeros((1,), dtype=np.float32),
-        )
+        if self.reward_input:
+            reward_input = env_obs_dict.pop(
+                "reward_input",
+                np.zeros((1,), dtype=np.float32),
+            )
 
-        env_obs_dict["reward_input"] = np.asarray(
-            reward_input,
-            dtype=np.float32,
-        ).reshape(1) 
+            env_obs_dict["reward_input"] = np.asarray(
+                reward_input,
+                dtype=np.float32,
+            ).reshape(1) 
         ##########################################
 
         if instr is not None:

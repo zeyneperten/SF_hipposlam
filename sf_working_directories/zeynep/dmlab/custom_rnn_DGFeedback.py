@@ -1,149 +1,283 @@
-from typing import Optional, Union
+import numbers
+import weakref
+import warnings
+from typing import Optional, overload
 
 import torch
-from torch import Tensor, nn
+from torch import _VF, Tensor
+from torch.nn import RNNBase
+from torch.nn.parameter import Parameter
 from torch.nn.utils.rnn import PackedSequence
 
+from sample_factory.utils.utils import log
 
-class CustomRNN(nn.Module):
-    """One-layer ReLU RNN with constrained DG-feedback adaptation.
-
-    Effective recurrent matrix:
-        W_hh_eff = W_hh + W_in @ W_feedback
-
-    W_in is stored in lr_column and is fixed. W_feedback is lr_row and is
-    the only trainable parameter.
-    """
-
+class CustomRNN(RNNBase):
+   
+    @overload
     def __init__(
         self,
         input_size: int,
         hidden_size: int,
-        nonlinearity: str = "relu",
+        num_layers: int = 1,
+        nonlinearity: str = "tanh",
+        rank = 1,  # added the rank to allow low-rank adaptations
+        bias: bool = True,
         batch_first: bool = False,
-        bias: bool = False,
+        dropout: float = 0.0,
+        bidirectional: bool = False,
         device=None,
         dtype=None,
-    ) -> None:
-        super().__init__()
-        if nonlinearity != "relu":
-            raise ValueError("This constrained core is implemented for nonlinearity='relu'.")
-        if bias:
-            raise ValueError("This fixed shift-register core is designed with bias=False.")
+    ) -> None: ...
 
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.batch_first = batch_first
+    @overload
+    def __init__(self, *args, **kwargs) -> None: ...
 
-        factory_kwargs = {"device": device, "dtype": dtype}
-        self.register_buffer(
-            "weight_ih_l0", torch.zeros(hidden_size, input_size, **factory_kwargs)
+    def __init__(self, *args, **kwargs):
+        if "proj_size" in kwargs:
+            raise ValueError(
+                "proj_size argument is only supported for LSTM, not RNN or GRU"
+            )
+        if len(args) > 1:
+            self.hidden_size = args[1]
+        else:
+            self.hidden_size = kwargs.get("hidden_size", 0)
+        if len(args) > 3:
+            self.nonlinearity = args[3]
+            self.rank = args[4] 
+            args = args[:3] + args[4:]
+        else:
+            self.nonlinearity = kwargs.pop("nonlinearity", "tanh")
+        if len(args) > 4:
+            self.rank = args[4]
+            args = args[:3] + args[4:]
+        else:
+            self.rank = kwargs.pop("rank", 1)
+        if self.nonlinearity == "tanh":
+            mode = "RNN_TANH"
+        elif self.nonlinearity == "relu":
+            mode = "RNN_RELU"
+        else:
+            raise ValueError(
+                f"Unknown nonlinearity '{self.nonlinearity}'. Select from 'tanh' or 'relu'."
+            )
+        
+        if len(args) > 9:
+            self.device = args[9]
+        else:
+            self.device = kwargs.get("device", None)
+        if len(args) > 10:
+            self.dtype = args[10]
+        else:
+            self.dtype = kwargs.get("dtype", None)
+        factory_kwargs = {"device": self.device, "dtype": self.dtype}
+
+        #for layer in range(self.num_layers):
+            #for direction in range(num_directions):
+
+
+        super().__init__(mode, *args, **kwargs)
+
+        # change the rnn constructor to include low rank adaptation  #Idee: mach das zum parameter aber nicht teil der offiziellen liste, damit es trainiert wird aber nicht an den c code übergeben wird
+        # B
+        self.lr_column = Parameter(
+            torch.empty((self.hidden_size, self.rank), **factory_kwargs)
         )
-        self.register_buffer(
-            "weight_hh_l0", torch.zeros(hidden_size, hidden_size, **factory_kwargs)
+        # A
+        self.lr_row = Parameter(
+            torch.empty((self.rank, self.hidden_size), **factory_kwargs)
         )
 
-        # Fixed B factor in Delta_W = B @ A. It is W_in / W_ih.
-        self.register_buffer(
-            "lr_column", torch.zeros(hidden_size, input_size, **factory_kwargs)
-        )
+        self.reset_parameters()
 
-        # Trainable A factor in Delta_W = B @ A. It is W_feedback.
-        self.lr_row = nn.Parameter(
-            torch.zeros(input_size, hidden_size, **factory_kwargs)
-        )
 
-    def set_fixed_weights(self, W_ih: Tensor, W_hh: Tensor) -> None:
-        """Set W_in and W_hh, and tie the fixed LoRA column to W_in."""
-        if W_ih.shape != self.weight_ih_l0.shape:
-            raise ValueError(f"W_ih must have shape {tuple(self.weight_ih_l0.shape)}.")
-        if W_hh.shape != self.weight_hh_l0.shape:
-            raise ValueError(f"W_hh must have shape {tuple(self.weight_hh_l0.shape)}.")
+    def set_fixed_weights(self, W_in, W_hh):
+        """
+        Configure fixed CA3 weights and constrained DG-feedback LoRA.
 
-        with torch.no_grad():
-            self.weight_ih_l0.copy_(W_ih)
+        Effective recurrence:
+            W_hh_eff = W_hh + W_in @ W_feedback
+
+        lr_column = W_in          fixed
+        lr_row    = W_feedback    trainable
+        """
+        with torch.no_grad(): # disable gradient calculation for fixed weights
+            self.weight_ih_l0.copy_(W_in)
             self.weight_hh_l0.copy_(W_hh)
-            self.lr_column.copy_(W_ih)
+
+            # Fixed DG -> CA3 map.
+            self.lr_column.copy_(W_in)
+
+            # Initial condition: no learned feedback yet.
             self.lr_row.zero_()
 
-    @property
-    def effective_weight_hh(self) -> Tensor:
-        # W_hh + W_in @ W_feedback
-        return self.weight_hh_l0 + self.lr_column @ self.lr_row
+        # Freeze fixed CA3 and DG -> CA3 structure.
+        self.weight_ih_l0.requires_grad_(False)
+        self.weight_hh_l0.requires_grad_(False)
+        self.lr_column.requires_grad_(False)
 
-    def _step(self, x_t: Tensor, h_t: Tensor) -> Tensor:
-        pre_activation = x_t @ self.weight_ih_l0.T + h_t @ self.effective_weight_hh.T
-        return torch.relu(pre_activation)
+        # Only learned matrix: CA3 -> DG feedback.
+        self.lr_row.requires_grad_(True)
 
-    def _forward_packed(self, packed: PackedSequence, hx: Optional[Tensor]):
-        data, batch_sizes, sorted_indices, unsorted_indices = packed
-        max_batch = int(batch_sizes[0])
+    def update_weights():
+        # 
+ 
+        pass
 
-        if hx is None:
-            h = data.new_zeros(max_batch, self.hidden_size)
-        else:
-            if hx.ndim != 3 or hx.shape[0] != 1 or hx.shape[2] != self.hidden_size:
-                raise ValueError(
-                    "For this one-layer RNN, hx must have shape (1, batch, hidden_size)."
-                )
-            h = hx[0]
-            if sorted_indices is not None:
-                h = h.index_select(0, sorted_indices)
 
-        outputs = []
-        offset = 0
-        for batch_size in batch_sizes.tolist():
-            x_t = data[offset : offset + batch_size]
-            h_active = self._step(x_t, h[:batch_size])
-            h = torch.cat((h_active, h[batch_size:]), dim=0)
-            outputs.append(h_active)
-            offset += batch_size
-
-        output = PackedSequence(
-            torch.cat(outputs, dim=0), batch_sizes, sorted_indices, unsorted_indices
-        )
-        hidden = h.unsqueeze(0)
-        if unsorted_indices is not None:
-            hidden = hidden.index_select(1, unsorted_indices)
-        return output, hidden
-
+    @overload
+    @torch._jit_internal._overload_method  # noqa: F811
     def forward(
-        self, input: Union[Tensor, PackedSequence], hx: Optional[Tensor] = None
-    ):
-        if isinstance(input, PackedSequence):
-            return self._forward_packed(input, hx)
+        self, input: Tensor, hx: Optional[Tensor] = None
+    ) -> tuple[Tensor, Tensor]:
+        pass
 
-        unbatched = input.ndim == 2
-        if unbatched:
-            input = input.unsqueeze(1 if not self.batch_first else 0)
-        if input.ndim != 3:
-            raise ValueError("input must be a 2-D, 3-D, or PackedSequence tensor.")
+    @overload
+    @torch._jit_internal._overload_method  # noqa: F811
+    def forward(
+        self, input: PackedSequence, hx: Optional[Tensor] = None
+    ) -> tuple[PackedSequence, Tensor]:
+        pass
 
-        if self.batch_first:
-            input = input.transpose(0, 1)
-        time_steps, batch_size, input_size = input.shape
-        if input_size != self.input_size:
-            raise ValueError(f"Expected input_size={self.input_size}, got {input_size}.")
+    def forward(self, input, hx=None):  # noqa: F811
+        """
+        Runs the forward pass.
+        """
+        '''
+        new_W_hh = self.weight_hh_l0 + self.lr_column @ self.lr_row
+        self.weight_hh_l0 = new_W_hh
+        '''
+        self._update_flat_weights()
 
-        if hx is None:
-            h = input.new_zeros(batch_size, self.hidden_size)
-        else:
-            if hx.shape != (1, batch_size, self.hidden_size):
-                raise ValueError(
-                    f"hx must have shape (1, {batch_size}, {self.hidden_size})."
+        # add low-rank adaptation to the recurrent weights
+        weights = list(self._flat_weights)
+
+        idx = self._flat_weights_names.index("weight_hh_l0")
+        W_hh_base = weights[idx]
+        new_W_hh = W_hh_base + self.lr_column @ self.lr_row
+        # update recurrent weights to the new weights with low-rank adaptation
+        weights[idx] = new_W_hh
+
+        num_directions = 2 if self.bidirectional else 1
+        orig_input = input
+
+        if isinstance(orig_input, PackedSequence):
+            input, batch_sizes, sorted_indices, unsorted_indices = input
+            max_batch_size = batch_sizes[0]
+            # script() is unhappy when max_batch_size is different type in cond branches, so we duplicate
+            if hx is None:
+                hx = torch.zeros(
+                    self.num_layers * num_directions,
+                    max_batch_size,
+                    self.hidden_size,
+                    dtype=input.dtype,
+                    device=input.device,
                 )
-            h = hx[0]
+            else:
+                # Each batch of the hidden state should match the input sequence that
+                # the user believes he/she is passing in.
+                hx = self.permute_hidden(hx, sorted_indices)
+        else:
+            batch_sizes = None
+            if input.dim() not in (2, 3):
+                raise ValueError(
+                    f"RNN: Expected input to be 2D or 3D, got {input.dim()}D tensor instead"
+                )
+            is_batched = input.dim() == 3
+            batch_dim = 0 if self.batch_first else 1
+            if not is_batched:
+                input = input.unsqueeze(batch_dim)
+                if hx is not None:
+                    if hx.dim() != 2:
+                        raise RuntimeError(
+                            f"For unbatched 2-D input, hx should also be 2-D but got {hx.dim()}-D tensor"
+                        )
+                    hx = hx.unsqueeze(1)
+            else:
+                if hx is not None and hx.dim() != 3:
+                    raise RuntimeError(
+                        f"For batched 3-D input, hx should also be 3-D but got {hx.dim()}-D tensor"
+                    )
+            max_batch_size = input.size(0) if self.batch_first else input.size(1)
+            sorted_indices = None
+            unsorted_indices = None
+            if hx is None:
+                hx = torch.zeros(
+                    self.num_layers * num_directions,
+                    max_batch_size,
+                    self.hidden_size,
+                    dtype=input.dtype,
+                    device=input.device,
+                )
+            else:
+                # Each batch of the hidden state should match the input sequence that
+                # the user believes he/she is passing in.
+                hx = self.permute_hidden(hx, sorted_indices)
 
-        outputs = []
-        for t in range(time_steps):
-            h = self._step(input[t], h)
-            outputs.append(h)
-        output = torch.stack(outputs, dim=0)
-        hidden = h.unsqueeze(0)
+        assert hx is not None
+        self.check_forward_args(input, hx, batch_sizes)
+        assert self.mode == "RNN_TANH" or self.mode == "RNN_RELU"
+        if batch_sizes is None:
+            if self.mode == "RNN_TANH":
+                result = _VF.rnn_tanh(
+                    input,
+                    hx,
+                    weights,  # type: ignore[arg-type]
+                    self.bias,
+                    self.num_layers,
+                    self.dropout,
+                    self.training,
+                    self.bidirectional,
+                    self.batch_first,
+                )
+            else:
+                result = _VF.rnn_relu(
+                    input,
+                    hx,
+                    weights,  # type: ignore[arg-type]
+                    self.bias,
+                    self.num_layers,
+                    self.dropout,
+                    self.training,
+                    self.bidirectional,
+                    self.batch_first,
+                )
+        else:
+            if self.mode == "RNN_TANH":
+                result = _VF.rnn_tanh(
+                    input,
+                    batch_sizes,
+                    hx,
+                    weights,  # type: ignore[arg-type]
+                    self.bias,
+                    self.num_layers,
+                    self.dropout,
+                    self.training,
+                    self.bidirectional,
+                )
+            else:
+                result = _VF.rnn_relu(
+                    input,
+                    batch_sizes,
+                    hx,
+                    weights,  # type: ignore[arg-type]
+                    self.bias,
+                    self.num_layers,
+                    self.dropout,
+                    self.training,
+                    self.bidirectional,
+                )
 
-        if self.batch_first:
-            output = output.transpose(0, 1)
-        if unbatched:
-            output = output.squeeze(1 if not self.batch_first else 0)
+        output = result[0]
+        hidden = result[1]
+
+        if isinstance(orig_input, PackedSequence):
+            output_packed = PackedSequence(
+                output, batch_sizes, sorted_indices, unsorted_indices
+            )
+            return output_packed, self.permute_hidden(hidden, unsorted_indices)
+
+        if not is_batched:  # type: ignore[possibly-undefined]
+            output = output.squeeze(batch_dim)  # type: ignore[possibly-undefined]
             hidden = hidden.squeeze(1)
-        return output, hidden
+
+        return output, self.permute_hidden(hidden, unsorted_indices)

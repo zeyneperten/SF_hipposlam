@@ -727,7 +727,6 @@ class HipposlamEncoder(Encoder):
 
         ## ADDED ##
         if self.reward_input:
-            
             reward_feat = obs_dict["reward_input"].to(device=x.device, dtype=x.dtype,)
             reward_feat = reward_feat.reshape(x.shape[0], 1)
             ###########
@@ -735,15 +734,9 @@ class HipposlamEncoder(Encoder):
         if self.with_number_instruction:
             instr = obs_dict[DMLAB_INSTRUCTIONS]
 
-            # --- ADDED: Extract the actual instruction values for logging ---
-            # instr is shape [batch_size, 1], squeeze it to 1D and convert to list/cpu
-            #current_instructions = instr.squeeze(1).long().tolist()
-            #####
-
             last_outputs = (
                 torch.nn.functional.one_hot(torch.clamp(instr.squeeze(1) - 1, min=0).long(), num_classes=3) * self.number_instruction_coef #torch.nn.functional.one_hot(instr.squeeze(1) - 1, num_classes=3) * self.number_instruction_coef
             )
-
             #log.info(last_outputs) # this should be a tensor of shape [batch_size, 3] with one-hot encoding of the instruction number
             #log.info(f"Batch Instructions: {current_instructions} | Encoded Shape: {last_outputs.shape}")
 
@@ -774,14 +767,17 @@ class HipposlamEncoder(Encoder):
 
         ## ADDED put concatenation and tmp_out = DG_projection inside a condition ##
         if self.INSTR_modulation == "concatenate":
+            #log.warning('Visual + INSTR')
             x = torch.cat((x, last_outputs), dim=1)
             if self.reward_input:
-                x_combined = torch.cat((x, last_outputs, reward_feat), dim=1)
+                #log.warning('Visual + INSTR + Reward')
+                x_combined = torch.cat((x, reward_feat), dim=1)
                 tmp_out = self.DG_projection(x_combined) # default was x where visuals and instructions were concatenated, but we combined it with reward feature
             else:
                 tmp_out = self.DG_projection(x) # default was x where visuals and instructions were concatenated, but we combined it with reward feature
 
-        elif self.INSTR_modulation == "multiply":   
+        elif self.INSTR_modulation == "multiply": 
+            #log.warning('DG MODULATION - Visual * INSTR')  
             # embed instructions to the same dimension as DG_projection output with a linear layer, then multiply to modulate the features
             # x is just visual features. DG_projection works because we fixed the size in __init__
             tmp_out = self.DG_projection(x) 
@@ -790,6 +786,7 @@ class HipposlamEncoder(Encoder):
             tmp_out = tmp_out * embedded_instr # Contextual modulation
 
             if self.reward_input:
+                #log.warning('DG MODULATION - Visual * INSTR * Reward')
                 embedded_reward = self.reward_embed_layer(reward_feat)
                 tmp_out = tmp_out * embedded_reward
         #######
