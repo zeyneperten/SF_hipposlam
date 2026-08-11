@@ -233,6 +233,7 @@ class FixedRNNWithBypassCore(ModelCore):
                 rnn_output_packed.sorted_indices,
                 rnn_output_packed.unsorted_indices,
             )
+
             return concat_output, concat_hidden
         else:
             # For Tensor input.

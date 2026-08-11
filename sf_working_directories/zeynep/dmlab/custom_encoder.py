@@ -686,8 +686,8 @@ class HipposlamEncoder(Encoder):
                log.info(f"denpth_sensor {self.depth_sensor}")
                bypass_features = self.depth_encoder.get_out_size() + self.instructions_lstm_units
 
-        self.bypass = False
-        if cfg.core_name.startswith("Bypass"):  # "Gate":
+        self.bypass = getattr(cfg, "bypass_features", False)
+        if cfg.core_name.startswith("Bypass") or self.bypass:  # "Gate":
             self.bypass = True
             tmp_out_size += bypass_features
             log.info(f"using bypass, dim {bypass_features}")
@@ -806,6 +806,12 @@ class HipposlamEncoder(Encoder):
             dense_out = self.dense(x)
             tmp_out = torch.cat((tmp_out, dense_out), dim=1)
 
+        #log.debug(
+        #    f"Encoder output shape: {tmp_out.shape}, "
+        #    f"encoder_out_size: {self.encoder_out_size}, "
+        #    f"bypass enabled: {self.bypass}, "
+        #    f"depth_sensor: {self.depth_sensor}"
+        #)
         return tmp_out
 
     def get_out_size(self) -> int:
