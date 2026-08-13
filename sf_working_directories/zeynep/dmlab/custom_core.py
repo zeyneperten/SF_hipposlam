@@ -1511,7 +1511,7 @@ def make_hipposlam_core(cfg: Config, core_input_size: int) -> ModelCore:
             core = SimpleSequenceWithBypassCore_binary(cfg, core_input_size)
         elif cfg.core_name == "Default":
             core = ModelCoreRNN(cfg, core_input_size)
-        elif cfg.core_name == "DGFeebackLORA":
+        elif cfg.core_name == "BypassDGFeebackLORA":
             core = FixedRNNWithBypassCoreDGFeedbackLORA(cfg, core_input_size)
 
     else:

@@ -6,8 +6,8 @@ _params = ParamGrid(
         # Positional encoding sweep
         # -------------------------------------------------
         # Seeds
-        # ("seed", [1111, 2222, 3333, 4444, 5555]),
-        ("seed", [2222]),
+        ("seed", [1111, 2222, 3333, 4444, 5555]),
+        #("seed", [2222]),
     ]
 )
 
@@ -45,7 +45,8 @@ _params = ParamGrid(
 # )
 
 
-vstr = "ymazetrial"
+vstr = "ymaze_FB_rew_FIXED"
+prj = "ymaze_FB_rew"
 
 cli = (
     "--env=ymaze "
@@ -89,7 +90,7 @@ cli = (
     "--decoder_mlp_layers 64 64 "
     "--env_frameskip=8 "
     "--dmlab_reduced_action_set=True "
-    "--core_name=BypassSS "
+    "--core_name=BypassDGFeebackLORA " # default was set to ByPassSS
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
     "--learning_rate=0.0002 "
@@ -116,7 +117,7 @@ cli = (
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
-    "--INSTR_embedding=multiply "
+    "--reward_input=True "
 )
 
 

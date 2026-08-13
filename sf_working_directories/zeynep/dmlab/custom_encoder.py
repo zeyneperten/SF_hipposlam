@@ -555,7 +555,7 @@ class HipposlamEncoder(Encoder):
             self.Hippo_n_feature = cfg.Hippo_n_feature
         else:
             self.Hippo_n_feature = 64
-            log.info("hippo n feature not set, using default: {self.Hippo_n_feature}")
+            log.info(f"hippo n feature not set, using default: {self.Hippo_n_feature}")
         self.depth_sensor = getattr(cfg, "depth_sensor", False)
         # self.depth_sensor=False
         log.info(self.depth_sensor)
@@ -574,8 +574,8 @@ class HipposlamEncoder(Encoder):
         self.basic_encoder = make_img_encoder(cfg, obs_cnn)
         self.encoder_out_size = self.basic_encoder.get_out_size()
 
-        self.INSTR_modulation = cfg.INSTR_modulation ## ADDED ## 
-        self.reward_input = cfg.reward_input ## ADDED ##
+        self.INSTR_modulation = getattr(cfg, "INSTR_modulation", "concatenate") ## ADDED 
+        self.reward_input = getattr(cfg, "reward_input", False) ## ADDED 
 
         self.with_number_instruction = cfg.with_number_instruction
         self.number_instruction_coef = getattr(cfg, "number_instruction_coef", 1)
@@ -609,11 +609,17 @@ class HipposlamEncoder(Encoder):
 
         ### ADDED reward_input to the encoder output, so that we can use it for DG projection ###
         # Number of scalar features for reward input (e.g. 1 float)
+        self.reward_input_dim = 0
+
         if self.reward_input:
             self.reward_input_dim = 1
-            # We will concatenate it to x + instructions before DG_projection   
             self.encoder_out_size += self.reward_input_dim
-            self.reward_embed_layer = nn.Linear(self.reward_input_dim, cfg.Hippo_n_feature)
+
+            if self.INSTR_modulation == "multiply":
+                self.reward_embed_layer = nn.Linear(
+                    self.reward_input_dim,
+                    cfg.Hippo_n_feature,
+                )
         ##########################################################################################
 
         # ADDED subtract the instruction size if we are multiplying, otherwise DG_projection will be the wrong size
@@ -622,7 +628,6 @@ class HipposlamEncoder(Encoder):
              self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
              if self.reward_input:
                 self.encoder_out_size -= self.reward_input_dim
-                self.reward_embed_layer = nn.Linear(self.reward_input_dim, cfg.Hippo_n_feature) # CHECK 
         ###################################################################################################
 
         log.info("DMLab policy head output size: %r", self.encoder_out_size)
@@ -686,8 +691,7 @@ class HipposlamEncoder(Encoder):
                log.info(f"denpth_sensor {self.depth_sensor}")
                bypass_features = self.depth_encoder.get_out_size() + self.instructions_lstm_units
 
-        self.bypass = getattr(cfg, "bypass_features", False)
-        if cfg.core_name.startswith("Bypass") or self.bypass:  # "Gate":
+        if cfg.core_name.startswith("Bypass"):  # "Gate":
             self.bypass = True
             tmp_out_size += bypass_features
             log.info(f"using bypass, dim {bypass_features}")
@@ -726,10 +730,14 @@ class HipposlamEncoder(Encoder):
         x = self.basic_encoder(obs_cnn) # this is the visual features
 
         ## ADDED ##
+        reward_feat = None
         if self.reward_input:
-            reward_feat = obs_dict["reward_input"].to(device=x.device, dtype=x.dtype,)
-            reward_feat = reward_feat.reshape(x.shape[0], 1)
-            ###########
+            reward_input = obs_dict.get("reward_input", None)
+            reward_feat = reward_input.to(
+                device=x.device,
+                dtype=x.dtype,
+            ).reshape(x.shape[0], 1)
+        ###########
 
         if self.with_number_instruction:
             instr = obs_dict[DMLAB_INSTRUCTIONS]

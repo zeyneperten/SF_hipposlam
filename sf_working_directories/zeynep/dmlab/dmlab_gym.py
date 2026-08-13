@@ -361,7 +361,7 @@ class DmlabGymEnv_custom(gym.Env):
         else:
             log.debug("REWARD INPUT IS ENABLED")
             observation_format += ["reward_input"]
-        
+            
         # Initialize step-tracking temporary pulse variables
         self._temp_hi_hit = 0.0
         self._temp_hi_miss = 0.0
@@ -449,6 +449,7 @@ class DmlabGymEnv_custom(gym.Env):
                 shape=[3],
                 dtype=np.float64,
             )
+        
         ## ADDED ##
         if self.reward_input:
             self.observation_space.spaces["reward_input"] = gym.spaces.Box(
@@ -458,7 +459,7 @@ class DmlabGymEnv_custom(gym.Env):
                 dtype=np.float32,
             )
         ###########
-
+        
         # if self.depth_sensor:
         #     self.observation_space.spaces['depth'] = gym.spaces.Box(
         #         low=0,
