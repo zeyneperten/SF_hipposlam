@@ -45,11 +45,11 @@ _params = ParamGrid(
 # )
 
 
-vstr = "ymaze_norew_instrx200_modulate"
+vstr = "SCALE_norew_instrx200_modulate"
 prj = "ymaze_norew_instr"
 
 cli = (
-    "--env=ymaze "
+    "--env=ymaze_instr "
     f"--wandb_project={prj} "
     "--seed=42 "
     "--train_for_seconds=144000 "
@@ -111,13 +111,14 @@ cli = (
     "--Hippo_L=64 "
     "--rnn_size=1149 "
     # "--exploration_loss_coeff=0.005 "
-    # "--value_loss_coeff=0.3 "
-    # "--ppo_clip_ratio=0.25 "
+    # "--value_loss_coeff=0.3 " 
+    #"--ppo_clip_ratio=0.25 " 
     # "--pbt_perturb_max=1.3 "
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
-    "--INSTR_modulation=multiply"
+    "--INSTR_modulation=multiply "
+    "--reward_scale=0.01 " ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)
 )
 
 _experiments = [

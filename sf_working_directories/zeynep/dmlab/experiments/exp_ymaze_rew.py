@@ -45,7 +45,7 @@ _params = ParamGrid(
 # )
 
 
-vstr = "ymaze_noFB_rew_FIXED"
+vstr = "ymaze_noFB_rew_FIXEDd"
 prj = "ymaze_noFB_rew"
 cli = (
     "--env=ymaze "
