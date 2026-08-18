@@ -51,14 +51,17 @@ _params = ParamGrid(
         ("seed", [1111, 2222, 3333, 4444, 5555]),
         ("learning_rate", [0.00002, 0.0001, 0.0002]),
         ("reward_scale", [0.01, 0.1, 1.0]),
+        ("number_instruction_coef", [200, 9]),
     ]
 )
 
 #vstr = "ymaze_noFB_rew_FIXEDd"
-prj = "ymaze_noFB_rew"
+#prj = "ymaze_noFB_rew"
+
+prj = "ymaze_rew_INSTR" # IF THIS IS ACTIVE CHECK number_instruction_coef 
 
 base_cli = (
-    "--env=ymaze "
+    "--env=ymaze_instr "
     f"--wandb_project={prj} "
     "--seed=42 "
     "--train_for_seconds=144000 "
@@ -113,7 +116,7 @@ base_cli = (
     "--save_best_metric=lenweighted_score "
     "--device=cpu "
     "--Hippo_n_feature=16 "
-    "--number_instruction_coef=9 " ## increase if needed
+    #"--number_instruction_coef=9 " ## increase if needed
     "--DG_BN_intercept=2.43 "
     "--depth_sensor=True "
     "--normalize_input=False "
@@ -135,12 +138,14 @@ for cfg in _params.generate_params(False):
     seed = cfg["seed"]
     lr = cfg["learning_rate"]
     rs = cfg["reward_scale"]
+    coef = cfg["number_instruction_coef"]
 
     # This becomes the experiment/run name
     vstr = (
-        f"noFB_FixedRew_{seed}"
+        f"rew_INSTR_{seed}"
         f"_LR{lr:.0e}"
         f"_RS{rs:.2g}"
+        f"_coef{coef}"
     )
 
     cli = (
@@ -148,13 +153,14 @@ for cfg in _params.generate_params(False):
         + f"--seed={seed} "
         + f"--learning_rate={lr} "
         + f"--reward_scale={rs} "
+        + f"--number_instruction_coef={coef} "
     )
 
     # One config per Experiment → one run per config with its own name
     _experiments.append(Experiment(vstr, cli, [cfg]))
 
 # Top-level description name can be generic
-RUN_DESCRIPTION = RunDescription("noFB_FixedRew_LR_RS_seed_grid", experiments=_experiments)
+RUN_DESCRIPTION = RunDescription("rew_INSTR_LR_RS_seed_grid", experiments=_experiments)
 
 
 ## DEFAULT ##

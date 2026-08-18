@@ -272,7 +272,7 @@ class DGProjection_batchnorm_relu(nn.Module):
         self.intercept = intercept
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.linear(x)  # Shape: [batch_size, out_features]
+        x = self.linear(x)  # Shape: [batch_size, out_features] # ADD FLAG HERE do instruction multiplication before batchnorm 
         x = self.batchnorm1d(x)
         # Replace logits with softmaxed probabilities.
         x = self.activation(x - self.intercept)
@@ -788,15 +788,16 @@ class HipposlamEncoder(Encoder):
             #log.warning('DG MODULATION - Visual * INSTR')  
             # embed instructions to the same dimension as DG_projection output with a linear layer, then multiply to modulate the features
             # x is just visual features. DG_projection works because we fixed the size in __init__
-            tmp_out = self.DG_projection(x) 
             # Use the layer we stored in memory in __init__
             embedded_instr = self.instruction_embed_layer(last_outputs)
-            tmp_out = tmp_out * embedded_instr # Contextual modulation
+            x = x * embedded_instr # Contextual modulation # ADD FLAG TO DGProjection_batchnorm_relu(nn.Module)
 
             if self.reward_input:
                 #log.warning('DG MODULATION - Visual * INSTR * Reward')
                 embedded_reward = self.reward_embed_layer(reward_feat)
-                tmp_out = tmp_out * embedded_reward
+                x = x * embedded_reward # Contextual modulation with reward
+
+            tmp_out = self.DG_projection(x) # after this try SIGMOID for instr modulation 
         #######
 
         # log.info(tmp_out) (this was already commented out in the original code) 

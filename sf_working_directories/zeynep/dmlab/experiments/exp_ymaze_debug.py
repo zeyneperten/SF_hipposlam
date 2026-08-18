@@ -7,6 +7,9 @@ _params = ParamGrid(
         # -------------------------------------------------
         # Seeds
         ("seed", [1111, 2222, 3333, 4444, 5555]),
+        ("number_instruction_coef", [9, 200]),
+        ("reward_scale", [0.01, 0.1, 1.0]),
+        ("learning_rate", [0.00002, 0.0001, 0.0002]),
         #("seed", [2222]),
     ]
 )
@@ -45,7 +48,7 @@ _params = ParamGrid(
 # )
 
 
-vstr = "SCALE_norew_instrx200_modulate"
+vstr = "newmod_norew_INSTR"
 prj = "ymaze_norew_instr"
 
 cli = (
