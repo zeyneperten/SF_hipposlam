@@ -352,7 +352,7 @@ class DmlabGymEnv_custom(gym.Env):
             'highrew_hit', 'highrew_miss', 'lowrew_hit', 'lowrew_miss',
             'highrew_hit_total', 'highrew_miss_total',
             'lowrew_hit_total', 'lowrew_miss_total',
-            'flexibility'
+            'flexibility', 'inst_block'
         ]
 
         self.reward_input = reward_input
@@ -532,6 +532,7 @@ class DmlabGymEnv_custom(gym.Env):
         self._total_lo_miss = float(env_obs_dict.pop('lowrew_miss_total', [0.0])[0])
 
         self._flexibility = float(env_obs_dict.pop('flexibility', [0.0])[0])
+        self._inst_block = int(env_obs_dict.pop('inst_block', [0])[0])
         # -----------------------------------------
 
       # if self.with_pos_obs:
@@ -593,6 +594,7 @@ class DmlabGymEnv_custom(gym.Env):
         info["highrew_miss"] = getattr(self, '_temp_hi_miss', 0.0) > 0
         info["lowrew_hit"] = getattr(self, '_temp_lo_hit', 0.0) > 0
         info["lowrew_miss"] = getattr(self, '_temp_lo_miss', 0.0) > 0
+]
 
         if terminated or truncated:
             if "episode_extra_stats" not in info:
@@ -607,6 +609,8 @@ class DmlabGymEnv_custom(gym.Env):
             info["episode_extra_stats"]["custom/flexibility"] = self._flexibility
 
             info["episode_extra_stats"]["custom/instr_switch"] = self._last_instruction 
+
+            info["episode_extra_stats"]["custom/inst_block"] = self._inst_block
             
             # Save raw step histories locally
             info["hi_hit_history"] = self.hi_hit_history.copy()
