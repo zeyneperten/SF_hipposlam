@@ -594,7 +594,7 @@ class DmlabGymEnv_custom(gym.Env):
         info["highrew_miss"] = getattr(self, '_temp_hi_miss', 0.0) > 0
         info["lowrew_hit"] = getattr(self, '_temp_lo_hit', 0.0) > 0
         info["lowrew_miss"] = getattr(self, '_temp_lo_miss', 0.0) > 0
-]
+
 
         if terminated or truncated:
             if "episode_extra_stats" not in info:

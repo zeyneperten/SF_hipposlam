@@ -257,7 +257,7 @@ class DGProjection_relu(nn.Module):
 
 
 class DGProjection_batchnorm_relu(nn.Module):
-    def __init__(self, in_features: int, out_features: int, intercept=2):
+    def __init__(self, in_features: int, out_features: int, intercept=2, modulate=False):
         """
         Enforces that each neuron's output (after softmax) is activated (set to 1)
         only if its probability exceeds the running quantile (e.g., 98th percentile)
@@ -270,9 +270,14 @@ class DGProjection_batchnorm_relu(nn.Module):
         self.batchnorm1d = nn.BatchNorm1d(out_features, affine=False, momentum=0.1)
         self.activation = nn.ReLU()
         self.intercept = intercept
+        self.modulate = modulate
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.linear(x)  # Shape: [batch_size, out_features] # ADD FLAG HERE do instruction multiplication before batchnorm 
+    def forward(self, x: torch.Tensor, context = None) -> torch.Tensor:
+        x = self.linear(x)  # Shape: [batch_size, out_features] 
+        # ADD FLAG HERE do instruction multiplication before batchnorm 
+        if self.modulate and context is not None:
+            # Assuming context is of shape [batch_size, out_features] or can be transformed to that shape
+            x = x * context 
         x = self.batchnorm1d(x)
         # Replace logits with softmaxed probabilities.
         x = self.activation(x - self.intercept)
@@ -581,7 +586,7 @@ class HipposlamEncoder(Encoder):
         self.number_instruction_coef = getattr(cfg, "number_instruction_coef", 1)
         if self.with_number_instruction:
             # repurposed it to encode map number
-            self.instructions_lstm_units = 3
+            self.instructions_lstm_units = 2
         else:
             # same as IMPALA paper
             self.embedding_size = 20
@@ -623,7 +628,7 @@ class HipposlamEncoder(Encoder):
         ##########################################################################################
 
         # ADDED subtract the instruction size if we are multiplying, otherwise DG_projection will be the wrong size
-        if self.INSTR_modulation == "multiply":
+        if self.INSTR_modulation in ["multiply", "sigmoid"]:
              self.encoder_out_size -= self.instructions_lstm_units
              self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
              if self.reward_input:
@@ -665,7 +670,8 @@ class HipposlamEncoder(Encoder):
         elif cfg.DG_name == "batchnorm_relu":
             intercept = getattr(cfg, "DG_BN_intercept", 2)
             self.DG_projection = DGProjection_batchnorm_relu(
-                self.encoder_out_size, cfg.Hippo_n_feature, intercept=intercept
+                self.encoder_out_size, cfg.Hippo_n_feature, intercept=intercept,
+                modulate=(self.INSTR_modulation == "multiply") # ADDED
             )
         elif cfg.DG_name == "batchnorm_relu_fixed":
             intercept = getattr(cfg, "DG_BN_intercept", 2)
@@ -743,7 +749,7 @@ class HipposlamEncoder(Encoder):
             instr = obs_dict[DMLAB_INSTRUCTIONS]
 
             last_outputs = (
-                torch.nn.functional.one_hot(torch.clamp(instr.squeeze(1) - 1, min=0).long(), num_classes=3) * self.number_instruction_coef #torch.nn.functional.one_hot(instr.squeeze(1) - 1, num_classes=3) * self.number_instruction_coef
+                torch.nn.functional.one_hot(torch.clamp(instr.squeeze(1) - 1, min=0).long(), num_classes=2) * self.number_instruction_coef 
             )
             #log.info(last_outputs) # this should be a tensor of shape [batch_size, 3] with one-hot encoding of the instruction number
             #log.info(f"Batch Instructions: {current_instructions} | Encoded Shape: {last_outputs.shape}")
@@ -775,29 +781,30 @@ class HipposlamEncoder(Encoder):
 
         ## ADDED put concatenation and tmp_out = DG_projection inside a condition ##
         if self.INSTR_modulation == "concatenate":
-            #log.warning('Visual + INSTR')
             x = torch.cat((x, last_outputs), dim=1)
             if self.reward_input:
-                #log.warning('Visual + INSTR + Reward')
                 x_combined = torch.cat((x, reward_feat), dim=1)
-                tmp_out = self.DG_projection(x_combined) # default was x where visuals and instructions were concatenated, but we combined it with reward feature
-            else:
-                tmp_out = self.DG_projection(x) # default was x where visuals and instructions were concatenated, but we combined it with reward feature
+                tmp_out = self.DG_projection(x_combined)
+                tmp_out = self.DG_projection(x) 
 
         elif self.INSTR_modulation == "multiply": 
-            #log.warning('DG MODULATION - Visual * INSTR')  
-            # embed instructions to the same dimension as DG_projection output with a linear layer, then multiply to modulate the features
-            # x is just visual features. DG_projection works because we fixed the size in __init__
-            # Use the layer we stored in memory in __init__
-            embedded_instr = self.instruction_embed_layer(last_outputs)
-            x = x * embedded_instr # Contextual modulation # ADD FLAG TO DGProjection_batchnorm_relu(nn.Module)
+            embedded_instr = self.instruction_embed_layer(last_outputs) # ADD FLAG TO DGProjection_batchnorm_relu(nn.Module)
 
-            if self.reward_input:
-                #log.warning('DG MODULATION - Visual * INSTR * Reward')
-                embedded_reward = self.reward_embed_layer(reward_feat)
-                x = x * embedded_reward # Contextual modulation with reward
+            #if self.reward_input:
+            #    embedded_reward = self.reward_embed_layer(reward_feat)
+               #  x = x * embedded_reward # Contextual modulation with reward
 
-            tmp_out = self.DG_projection(x) # after this try SIGMOID for instr modulation 
+            tmp_out = self.DG_projection(x, context=embedded_instr) 
+
+        elif self.INSTR_modulation == "sigmoid":
+            embedded_instr = self.instruction_embed_layer(last_outputs) 
+            embedded_instr = torch.sigmoid(embedded_instr) # Apply sigmoid to the instruction embedding
+
+            #if self.reward_input:
+            #    embedded_reward = self.reward_embed_layer(reward_feat)
+                # x = x * embedded_reward # Contextual modulation with reward
+
+            tmp_out = self.DG_projection(x) * embedded_instr # Post-projection gating
         #######
 
         # log.info(tmp_out) (this was already commented out in the original code) 
