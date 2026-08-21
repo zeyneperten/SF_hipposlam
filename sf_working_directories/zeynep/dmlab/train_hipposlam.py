@@ -85,7 +85,7 @@ def maybe_overwrite_rnn_size(cfg):
        R = getattr(cfg, "Hippo_R", 8)
        L = getattr(cfg, "Hippo_L", 48)
        hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64)
-       rnn_size = hippo_n_feature * (R + L - 1) + 13
+       rnn_size = hippo_n_feature * (R + L - 1) + 12 # 10 depth + 2 instruction features
        cfg.cli_args["rnn_size"] = rnn_size
        cfg.rnn_size = rnn_size
 

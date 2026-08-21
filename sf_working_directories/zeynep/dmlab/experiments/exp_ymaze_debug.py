@@ -48,7 +48,7 @@ _params = ParamGrid(
 # )
 
 
-vstr = "newmod_norew_INSTR"
+vstr = "sigmoid_norew_INSTR"
 prj = "ymaze_norew_instr"
 
 cli = (
@@ -120,7 +120,7 @@ cli = (
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
-    "--INSTR_modulation=multiply "
+    "--INSTR_modulation=sigmoid " # BE CAREFUL
     "--reward_scale=0.01 " ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)
 )
 
