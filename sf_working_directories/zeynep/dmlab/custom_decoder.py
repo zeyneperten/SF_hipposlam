@@ -44,10 +44,38 @@ class MlpDecoderJit(Decoder):
     def get_out_size(self):
         return self.decoder_out_size
 
+### ADDED Context modulated by FiLM (Feature-wise Linear Modulation)
+class MlpDecoderFiLMJit(Decoder):
+    def __init__(self, cfg: Config, decoder_input_size: int, context_dim: int = 0):
+        super().__init__(cfg)
+        self.core_input_size = decoder_input_size
+        self.context_dim = context_dim
+        decoder_layers: List[int] = cfg.decoder_mlp_layers
+        activation = nonlinearity(cfg)
+        self.mlp = create_mlp(decoder_layers, decoder_input_size, activation)
+        if len(decoder_layers) > 0 and cfg.use_jit:
+            self.mlp = torch.jit.script(self.mlp)
+
+        self.decoder_out_size = calc_num_elements(self.mlp, (decoder_input_size,))
+
+        if context_dim > 0:
+            self.film_gamma = nn.Linear(context_dim, decoder_input_size)
+            self.film_beta = nn.Linear(context_dim, decoder_input_size)
+
+    def forward(self, core_output, context=None):
+        x = core_output
+        if self.context_dim > 0 and context is not None:
+            gamma = self.film_gamma(context)
+            beta = self.film_beta(context)
+            x = gamma * x + beta
+        return self.mlp(x)
+
+    def get_out_size(self):
+        return self.decoder_out_size
+
 
 def make_hipposlam_decoder(cfg: Config, core_input_size: int) -> Decoder:
     return MlpDecoderJit(cfg, core_input_size)
-
 
 ############################################################################
 

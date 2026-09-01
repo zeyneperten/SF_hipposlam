@@ -403,6 +403,7 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
             return concat_output, concat_hidden
 
     def get_out_size(self) -> int:
+        log.debug(f"get out size called: {self.total_output_size}")
         return self.total_output_size
 
 

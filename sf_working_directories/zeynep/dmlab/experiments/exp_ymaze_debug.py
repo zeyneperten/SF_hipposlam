@@ -6,11 +6,11 @@ _params = ParamGrid(
         # Positional encoding sweep
         # -------------------------------------------------
         # Seeds
-        ("seed", [1111, 2222, 3333, 4444, 5555]),
-        ("number_instruction_coef", [9, 200]),
-        ("reward_scale", [0.01, 0.1, 1.0]),
-        ("learning_rate", [0.00002, 0.0001, 0.0002]),
-        #("seed", [2222]),
+        #("seed", [1111, 2222, 3333, 4444, 5555]),
+        #("number_instruction_coef", [9, 200]),
+        #("reward_scale", [0.01, 0.1, 1.0]),
+        #("learning_rate", [0.00002, 0.0001, 0.0002]),
+        ("seed", [2222]),
     ]
 )
 
@@ -48,8 +48,9 @@ _params = ParamGrid(
 # )
 
 
-vstr = "sigmoid_norew_INSTR"
-prj = "ymaze_norew_instr"
+
+vstr = "debugsig_norew_INSTR"
+prj = "ENC_DEC_ymaze_norew_instr"
 
 cli = (
     "--env=ymaze_instr "
@@ -99,7 +100,7 @@ cli = (
     "--learning_rate=0.0002 "
     "--fix_encoder_when_load=True "
     # "--encoder_load_path=/home/fr/fr_xl1014/training/best_000025288_203030528_reward_94.185.pth "
-    "--with_wandb=True "
+    "--with_wandb=False " # set True to log to wandb, False to log to tensorboard 
     "--wandb_user=xiaoxionglin-bernstein-center-freiburg "
     "--pbt_mix_policies_in_one_env=False "
     "--pbt_target_objective=lenweighted_score "
@@ -120,7 +121,8 @@ cli = (
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
-    "--INSTR_modulation=sigmoid " # BE CAREFUL
+    "--DG_context_mod=sigmoid " # BE CAREFUL
+    "--Decoder_context_mod=None " # BE CAREFUL
     "--reward_scale=0.01 " ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)
 )
 

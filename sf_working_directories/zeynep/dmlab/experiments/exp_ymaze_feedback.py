@@ -1,15 +1,15 @@
 from sample_factory.launcher.run_description import Experiment, ParamGrid, RunDescription
 
-#_params = ParamGrid(
-#    [
+_params = ParamGrid(
+    [
         # -------------------------------------------------
         # Positional encoding sweep
         # -------------------------------------------------
         # Seeds
 #        ("seed", [1111, 2222, 3333, 4444, 5555]),
-#        #("seed", [2222]),
-#    ]
-#)
+        ("seed", [2222]),
+    ]
+)
 
 # _params = ParamGrid(
 #     [
@@ -44,18 +44,19 @@ from sample_factory.launcher.run_description import Experiment, ParamGrid, RunDe
 #     ]
 # )
 
-_params = ParamGrid(
-    [
-        ("seed", [1111, 2222, 3333, 4444, 5555]),
-        ("learning_rate", [0.00002, 0.0001, 0.0002]),
-        ("reward_scale", [0.01, 0.1, 1.0])
-    ]
-)
+#_params = ParamGrid(
+#    [
+#        ("seed", [1111, 2222, 3333, 4444, 5555]),
+#        ("learning_rate", [0.00002, 0.0001, 0.0002]),
+#        ("number_instruction_coef", [9, 200])
+#    ]
+#)
 
-prj = "ymaze_FB_rew"
+prj = "ymaze_FB_instr"
+vstr = "DebugDirectionLORA_FB_sigmoid"
 
-base_cli = (
-    "--env=ymaze "
+cli = (
+    "--env=ymaze_instr "
     f"--wandb_project={prj} "
     # "--seed=42 "
     "--train_for_seconds=144000 "
@@ -99,7 +100,7 @@ base_cli = (
     "--core_name=BypassDGFeebackLORA " # default was set to ByPassSS
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
-    # "--learning_rate=0.00002 " # default 0.0002 LOWERED BECAUSE OF INF VALUE LOSS 
+    "--learning_rate=0.0002 " # default 
     "--fix_encoder_when_load=True "
     # "--encoder_load_path=/home/fr/fr_xl1014/training/best_000025288_203030528_reward_94.185.pth "
     "--with_wandb=True "
@@ -123,44 +124,20 @@ base_cli = (
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
-    "--reward_input=True "
+    # "--reward_input=True "
+    "--DG_context_mod=sigmoid "
+    "--reward_scale=0.01 " # default 1 LOWERED BECAUSE OF TOO HIGH VALUE LOSS
 )
 
 
 _experiments = []
-for cfg in _params.generate_params(False):
-    seed = cfg["seed"]
-    lr = cfg["learning_rate"]
-    rs = cfg["reward_scale"]
-
-    # This becomes the experiment/run name
-    vstr = (
-        f"FB_FixedRew_{seed}"
-        f"_LR{lr:.0e}"
-        f"_RS{rs:.2g}"
-    )
-
-    cli = (
-        base_cli
-        + f"--seed={seed} "
-        + f"--learning_rate={lr} "
-        + f"--reward_scale={rs} "
-    )
-
-    # One config per Experiment → one run per config with its own name
-    _experiments.append(Experiment(vstr, cli, [cfg]))
-
-# Top-level description name can be generic
-RUN_DESCRIPTION = RunDescription("FB_FixedRew_LR_RS_seed_grid", experiments=_experiments)
 
 
-## DEFAULT ##
+_experiments = [
+    Experiment(vstr, cli, _params.generate_params(False)),
+]
 
-#_experiments = [
-#    Experiment(vstr, cli, _params.generate_params(False)),
-#]
-
-#RUN_DESCRIPTION = RunDescription(f"{vstr}", experiments=_experiments)
+RUN_DESCRIPTION = RunDescription(f"{vstr}", experiments=_experiments)
 
 
 # Run locally: python -m sample_factory.launcher.run --backend=processes --max_parallel=1 --experiments_per_gpu=1 --num_gpus=1 --run=sf_examples.dmlab.experiments.dmlab30

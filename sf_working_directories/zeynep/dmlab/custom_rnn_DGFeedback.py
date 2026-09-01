@@ -8,6 +8,8 @@ from torch import _VF, Tensor
 from torch.nn import RNNBase
 from torch.nn.parameter import Parameter
 from torch.nn.utils.rnn import PackedSequence
+import torch.nn.functional as F
+import torch.nn as nn
 
 from sample_factory.utils.utils import log
 
@@ -89,6 +91,9 @@ class CustomRNN(RNNBase):
 
         self.reset_parameters()
 
+        # add to log 
+        self._feedback_forward_count = 0
+
 
     def set_fixed_weights(self, W_in, W_hh):
         """
@@ -108,7 +113,8 @@ class CustomRNN(RNNBase):
             self.lr_column.copy_(W_in)
 
             # Initial condition: no learned feedback yet.
-            self.lr_row.zero_()
+            # self.lr_row.zero_() # comment out for only direction learning, since I normalize
+            self.lr_row.normal_(mean=0.0, std=0.02)
 
         # Freeze fixed CA3 and DG -> CA3 structure.
         self.weight_ih_l0.requires_grad_(False)
@@ -133,6 +139,7 @@ class CustomRNN(RNNBase):
 
     @overload
     @torch._jit_internal._overload_method  # noqa: F811
+
     def forward(
         self, input: PackedSequence, hx: Optional[Tensor] = None
     ) -> tuple[PackedSequence, Tensor]:
@@ -146,6 +153,7 @@ class CustomRNN(RNNBase):
         new_W_hh = self.weight_hh_l0 + self.lr_column @ self.lr_row
         self.weight_hh_l0 = new_W_hh
         '''
+        self._feedback_forward_count += 1
         self._update_flat_weights()
 
         # add low-rank adaptation to the recurrent weights
@@ -153,7 +161,41 @@ class CustomRNN(RNNBase):
 
         idx = self._flat_weights_names.index("weight_hh_l0")
         W_hh_base = weights[idx]
-        new_W_hh = W_hh_base + self.lr_column @ self.lr_row
+        #new_W_hh = W_hh_base + self.lr_column @ self.lr_row
+
+        # UNIT NORMALIZATION #
+        direction = F.normalize(
+            self.lr_row,
+            p=2.0,
+            dim=None,
+            eps=1e-8,
+            )
+
+        W_feedback = direction
+        delta_W_hh = self.lr_column @ W_feedback
+        new_W_hh = W_hh_base + delta_W_hh
+        ###
+
+        with torch.no_grad():
+            lr_row_norm = torch.linalg.vector_norm(self.lr_row).item()
+
+        if self._feedback_forward_count % 50 == 0:
+            log.debug(f"lr_row_norm={lr_row_norm:.8g}")
+
+        with torch.no_grad():
+            if self.lr_row.grad is not None:
+                g = self.lr_row.grad
+                log.debug(
+                    f"lr_row_norm={torch.linalg.vector_norm(self.lr_row).item():.8g}, "
+                    f"grad_norm={torch.linalg.vector_norm(g).item():.8g}"
+                )
+
+        if not torch.isfinite(self.lr_row).all():
+            raise RuntimeError("lr_row contains NaN or Inf")
+
+        if not torch.isfinite(new_W_hh).all():
+            raise RuntimeError("new_W_hh contains NaN or Inf")
+
         # update recurrent weights to the new weights with low-rank adaptation
         weights[idx] = new_W_hh
 
@@ -162,6 +204,11 @@ class CustomRNN(RNNBase):
 
         if isinstance(orig_input, PackedSequence):
             input, batch_sizes, sorted_indices, unsorted_indices = input
+
+
+            if not torch.isfinite(input).all():
+                raise RuntimeError("RNN input contains NaN or Inf") # Previous step produced invalid input 
+
             max_batch_size = batch_sizes[0]
             # script() is unhappy when max_batch_size is different type in cond branches, so we duplicate
             if hx is None:
@@ -214,6 +261,10 @@ class CustomRNN(RNNBase):
                 hx = self.permute_hidden(hx, sorted_indices)
 
         assert hx is not None
+
+        if not torch.isfinite(hx).all():
+            raise RuntimeError("CustomRNN hidden state hx contains NaN or Inf") # Recurrent stat is invalid in an earlier step 
+        
         self.check_forward_args(input, hx, batch_sizes)
         assert self.mode == "RNN_TANH" or self.mode == "RNN_RELU"
         if batch_sizes is None:
@@ -241,6 +292,7 @@ class CustomRNN(RNNBase):
                     self.bidirectional,
                     self.batch_first,
                 )
+                
         else:
             if self.mode == "RNN_TANH":
                 result = _VF.rnn_tanh(
@@ -269,6 +321,26 @@ class CustomRNN(RNNBase):
 
         output = result[0]
         hidden = result[1]
+
+        if not torch.isfinite(output).all():
+            raise RuntimeError(
+                "CustomRNN output contains NaN/Inf; "
+                    f"lr_row_norm={torch.linalg.vector_norm(self.lr_row).item():.6g}, "
+                    f"delta_norm={torch.linalg.matrix_norm(delta_W_hh, ord='fro').item():.6g}, "
+                    f"W_hh_norm={torch.linalg.matrix_norm(W_hh_base, ord='fro').item():.6g}"
+                )        # RNN output is invalid
+        
+        if self._feedback_forward_count % 50 == 0:
+            with torch.no_grad():
+                log.debug(f"hidden_abs_max={hidden.abs().max().item():.4g},\noutput_abs_max={output.abs().max().item():.8g}")
+
+        if isinstance(orig_input, PackedSequence) and self._feedback_forward_count % 50 == 0:
+            with torch.no_grad():
+                padded_output, _ = nn.utils.rnn.pad_packed_sequence(
+                    PackedSequence(output, batch_sizes, sorted_indices, unsorted_indices)
+                )
+                per_timestep_max = padded_output.abs().amax(dim=(1, 2))
+                log.debug(f"output_abs_max_per_timestep={per_timestep_max.tolist()}") 
 
         if isinstance(orig_input, PackedSequence):
             output_packed = PackedSequence(

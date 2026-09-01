@@ -579,7 +579,9 @@ class HipposlamEncoder(Encoder):
         self.basic_encoder = make_img_encoder(cfg, obs_cnn)
         self.encoder_out_size = self.basic_encoder.get_out_size()
 
-        self.INSTR_modulation = getattr(cfg, "INSTR_modulation", "concatenate") ## ADDED 
+        self.DG_context_mod = getattr(cfg, "DG_context_mod", "None") ## ADDED 
+        self.Decoder_context_mod = getattr(cfg, "Decoder_context_mod", "None") ## ADDED 
+        
         self.reward_input = getattr(cfg, "reward_input", False) ## ADDED 
 
         self.with_number_instruction = cfg.with_number_instruction
@@ -620,19 +622,22 @@ class HipposlamEncoder(Encoder):
             self.reward_input_dim = 1
             self.encoder_out_size += self.reward_input_dim
 
-            if self.INSTR_modulation == "multiply":
+            if self.DG_context_mod != "None":
                 self.reward_embed_layer = nn.Linear(
                     self.reward_input_dim,
                     cfg.Hippo_n_feature,
                 )
         ##########################################################################################
 
-        # ADDED subtract the instruction size if we are multiplying, otherwise DG_projection will be the wrong size
-        if self.INSTR_modulation in ["multiply", "sigmoid"]:
+        # ADDED subtract the instruction size if we are only introducing context to encoder. 31.08.26 If need to introduce to decoder, we need to add them and bypass the core
+        if self.DG_context_mod in ["multiply", "sigmoid"] and self.Decoder_context_mod == "None":
              self.encoder_out_size -= self.instructions_lstm_units
-             self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
              if self.reward_input:
                 self.encoder_out_size -= self.reward_input_dim
+
+        needs_context = self.DG_context_mod != "None" or self.Decoder_context_mod != "None"
+        if needs_context:
+            self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
         ###################################################################################################
 
         log.info("DMLab policy head output size: %r", self.encoder_out_size)
@@ -671,7 +676,7 @@ class HipposlamEncoder(Encoder):
             intercept = getattr(cfg, "DG_BN_intercept", 2)
             self.DG_projection = DGProjection_batchnorm_relu(
                 self.encoder_out_size, cfg.Hippo_n_feature, intercept=intercept,
-                modulate=(self.INSTR_modulation == "multiply") # ADDED
+                modulate=(self.DG_context_mod == "multiply") # ADDED
             )
         elif cfg.DG_name == "batchnorm_relu_fixed":
             intercept = getattr(cfg, "DG_BN_intercept", 2)
@@ -694,8 +699,17 @@ class HipposlamEncoder(Encoder):
         if hasattr(cfg, "depth_sensor"):
            log.info(f"denpth_sensor {cfg.depth_sensor}")
            if self.depth_sensor:
-               log.info(f"denpth_sensor {self.depth_sensor}")
-               bypass_features = self.depth_encoder.get_out_size() + self.instructions_lstm_units
+                log.info(f"denpth_sensor {self.depth_sensor}")
+                depth_size = self.depth_encoder.get_out_size()
+                if self.DG_context_mod != "None" and self.Decoder_context_mod == "None":
+                   bypass_features = depth_size
+                else:
+                   bypass_features = depth_size + self.instructions_lstm_units
+           else:
+               if self.DG_context_mod != "None" and self.Decoder_context_mod == "None":
+                    bypass_features = 0
+               else:
+                   bypass_features = self.instructions_lstm_units
 
         if cfg.core_name.startswith("Bypass"):  # "Gate":
             self.bypass = True
@@ -743,6 +757,7 @@ class HipposlamEncoder(Encoder):
                 device=x.device,
                 dtype=x.dtype,
             ).reshape(x.shape[0], 1)
+            x = torch.cat((x, reward_feat), dim=1)
         ###########
 
         if self.with_number_instruction:
@@ -779,55 +794,88 @@ class HipposlamEncoder(Encoder):
 
         last_outputs = last_outputs.to(x.device)  # for some reason this is very slow
 
-        ## ADDED put concatenation and tmp_out = DG_projection inside a condition ##
-        if self.INSTR_modulation == "concatenate":
-            x = torch.cat((x, last_outputs), dim=1)
-            if self.reward_input:
-                x_combined = torch.cat((x, reward_feat), dim=1)
-                tmp_out = self.DG_projection(x_combined)
-                tmp_out = self.DG_projection(x) 
+        DG_mod = self.DG_context_mod
+        Dec_mod = self.Decoder_context_mod
+        decoder_context = None
 
-        elif self.INSTR_modulation == "multiply": 
-            embedded_instr = self.instruction_embed_layer(last_outputs) # ADD FLAG TO DGProjection_batchnorm_relu(nn.Module)
-
-            #if self.reward_input:
-            #    embedded_reward = self.reward_embed_layer(reward_feat)
-               #  x = x * embedded_reward # Contextual modulation with reward
-
-            tmp_out = self.DG_projection(x, context=embedded_instr) 
-
-        elif self.INSTR_modulation == "sigmoid":
-            embedded_instr = self.instruction_embed_layer(last_outputs) 
-            embedded_instr = torch.sigmoid(embedded_instr) # Apply sigmoid to the instruction embedding
-
-            #if self.reward_input:
-            #    embedded_reward = self.reward_embed_layer(reward_feat)
-                # x = x * embedded_reward # Contextual modulation with reward
-
-            tmp_out = self.DG_projection(x) * embedded_instr # Post-projection gating
-        #######
-
-        # log.info(tmp_out) (this was already commented out in the original code) 
-
+        depth_out = None
         if self.depth_sensor:
-           depth_out = self.depth_encoder(obs_dict["obs"][:, -1:, :, :])
-           depth_out = depth_out.view(obs_dict["obs"].size(0), -1)
-           bypass_out = torch.cat((depth_out, last_outputs), dim=1)
+            depth_out = self.depth_encoder(obs_dict["obs"][:, -1:, :, :])
+            depth_out = depth_out.view(obs_dict["obs"].size(0), -1)
+                
+                # ===== Regime selection =====
+        if DG_mod != "None" and Dec_mod == "None":
+                # 1. DG-only context: instructions modulate DG, do NOT go to decoder/bypass
+            embedded_instr = self.instruction_embed_layer(last_outputs)
+            
+                # No concat of instructions into x here: context only via embedded_instr
+            if DG_mod == "multiply":
+                tmp_out = self.DG_projection(x, context=embedded_instr)
+            elif DG_mod == "sigmoid":
+                embedded_instr = torch.sigmoid(embedded_instr)
+                tmp_out = self.DG_projection(x) * embedded_instr
+            else:
+                tmp_out = self.DG_projection(x)
+            
+                # Bypass carries only visual/depth (no instructions)
+            if self.depth_sensor:
+                bypass_out = depth_out
+            else:
+                bypass_out = x
+            
+        elif DG_mod == "None" and Dec_mod != "None":
+                # 2. Decoder-only context: DG/core see no instructions; decoder gets them via bypass/decoder_context
+            tmp_out = self.DG_projection(x)
+            
+                # Context for decoder (embedded or raw)
+            decoder_context = self.instruction_embed_layer(last_outputs)
+            
+                # Bypass carries instructions (and depth if present)
+            if self.depth_sensor:
+                bypass_out = torch.cat((depth_out, last_outputs), dim=1)
+            else:
+                bypass_out = last_outputs
+            
+        elif DG_mod != "None" and Dec_mod != "None":
+                # 3. DG + Decoder context: instructions modulate DG AND are visible to decoder
+            embedded_instr = self.instruction_embed_layer(last_outputs)
+            
+                # Core/DG input includes instructions
+            x_cat = torch.cat((x, last_outputs), dim=1)
+            
+            if DG_mod == "multiply":
+                tmp_out = self.DG_projection(x_cat, context=embedded_instr)
+            elif DG_mod == "sigmoid":
+                embedded_instr = torch.sigmoid(embedded_instr)
+                tmp_out = self.DG_projection(x_cat) * embedded_instr
+            else:
+                tmp_out = self.DG_projection(x_cat)
+            
+            decoder_context = embedded_instr  # decoder sees context too
+            
+                # Bypass also carries raw instructions (and depth if present)
+            if self.depth_sensor:
+                bypass_out = torch.cat((depth_out, last_outputs), dim=1)
+            else:
+                bypass_out = last_outputs
+            
         else:
-           bypass_out = x
-
+                # 0. No context: plain DG + optional visual/depth bypass
+            tmp_out = self.DG_projection(x)
+            if self.depth_sensor:
+                bypass_out = depth_out
+            else:
+                bypass_out = x
+            
+            # ===== Existing bypass / dense handling =====
         if self.bypass:
             tmp_out = torch.cat((tmp_out, bypass_out), dim=1)
         elif hasattr(self, "dense"):
             dense_out = self.dense(x)
             tmp_out = torch.cat((tmp_out, dense_out), dim=1)
-
-        #log.debug(
-        #    f"Encoder output shape: {tmp_out.shape}, "
-        #    f"encoder_out_size: {self.encoder_out_size}, "
-        #    f"bypass enabled: {self.bypass}, "
-        #    f"depth_sensor: {self.depth_sensor}"
-        #)
+            
+            # If you want decoder_context used later, you need to return it or stash it;
+            # for now, we just return tmp_out as before.
         return tmp_out
 
     def get_out_size(self) -> int:
@@ -1067,3 +1115,45 @@ def make_hipposlam_encoder(cfg: Config, obs_space: ObsSpace) -> Encoder:
     if cfg.encoder_name == "Default":
         return DmlabEncoder(cfg, obs_space)
     return HipposlamEncoder(cfg, obs_space)
+
+### 31.08.26 TO PREVIOUSLY
+ 
+        # ## ADDED, MODULATION CONDITIONS, TO DO: ADD REWARD_INPUT ##
+        # if self.DG_context_mod != "None" or self.Decoder_context_mod != "None": # UNTIL 31.08.26 THESE CONDITIONS DIDN'T HAVE CONTEXT CONCATENATION TO ENCODER OUTPUT, SO CONTEXT DOESN'T ENTER CORE/DECODER OR BE PART OF BYPASS
+        #     embedded_instr = self.instruction_embed_layer(last_outputs)
+        #     x = torch.cat((x, last_outputs), dim=1) # ADDED ON 31.08.26, context be a part of encoder output SO THEY CAN GET BYPASSED TO DECODER OR BE PART OF CORE
+        #     if self.DG_context_mod == "multiply":
+        #         tmp_out = self.DG_projection(x, context=embedded_instr) # ADD FLAG TO DGProjection_batchnorm_relu(nn.Module)
+        #     elif self.DG_context_mod == "sigmoid":
+        #         embedded_instr = torch.sigmoid(embedded_instr) # Apply sigmoid to the instruction embedding
+        #         tmp_out = self.DG_projection(x) * embedded_instr # Post-projection gating
+        # else:
+        #     if self.Decoder_context_mod == "None":
+        #         x = torch.cat((x, last_outputs), dim=1) ## Default concatenation of instructions to visual features ## WHEN BYPASS THEY DONT GO TO CORE BUT DIRECTLY TO DECODER 
+        #     tmp_out = self.DG_projection(x)
+        # #######
+
+        # # log.info(tmp_out) 
+
+        # if self.depth_sensor:
+        #    depth_out = self.depth_encoder(obs_dict["obs"][:, -1:, :, :])
+        #    depth_out = depth_out.view(obs_dict["obs"].size(0), -1)
+        #    bypass_out = torch.cat((depth_out, last_outputs), dim=1)
+        # else:
+        #    bypass_out = x
+
+        # if self.bypass:
+        #     tmp_out = torch.cat((tmp_out, bypass_out), dim=1)
+        # elif hasattr(self, "dense"):
+        #     dense_out = self.dense(x)
+        #     tmp_out = torch.cat((tmp_out, dense_out), dim=1)
+        # return tmp_out
+
+        # #log.debug(
+        # #    f"Encoder output shape: {tmp_out.shape}, "
+        # #    f"encoder_out_size: {self.encoder_out_size}, "
+        # #    f"bypass enabled: {self.bypass}, "
+        # #    f"depth_sensor: {self.depth_sensor}"
+        # #)
+        # #return tmp_out      
+        
