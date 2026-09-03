@@ -612,7 +612,16 @@ class HipposlamEncoder(Encoder):
         # self.lstm_h0 = nn.Parameter(initial_hidden_values, requires_grad=True)
         # self.lstm_c0 = nn.Parameter(initial_hidden_values, requires_grad=True)
 
-        self.encoder_out_size += self.instructions_lstm_units 
+        #self.encoder_out_size += self.instructions_lstm_units 
+
+        # Instructions enter DG only in concat mode. Instead of doing substraction like previously, we will add them to the encoder output size only in concat mode. 31.08.26
+        if self.DG_context_mod == "concat":
+            self.encoder_out_size += self.instructions_lstm_units
+
+        needs_context = self.DG_context_mod != "None" or self.Decoder_context_mod != "None"
+        if needs_context:
+            self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
+        ###################################################################################################
 
         ### ADDED reward_input to the encoder output, so that we can use it for DG projection ###
         # Number of scalar features for reward input (e.g. 1 float)
@@ -628,17 +637,6 @@ class HipposlamEncoder(Encoder):
                     cfg.Hippo_n_feature,
                 )
         ##########################################################################################
-
-        # ADDED subtract the instruction size if we are only introducing context to encoder. 31.08.26 If need to introduce to decoder, we need to add them and bypass the core
-        if self.DG_context_mod in ["multiply", "sigmoid"] and self.Decoder_context_mod == "None":
-             self.encoder_out_size -= self.instructions_lstm_units
-             if self.reward_input:
-                self.encoder_out_size -= self.reward_input_dim
-
-        needs_context = self.DG_context_mod != "None" or self.Decoder_context_mod != "None"
-        if needs_context:
-            self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
-        ###################################################################################################
 
         log.info("DMLab policy head output size: %r", self.encoder_out_size)
 
@@ -696,17 +694,20 @@ class HipposlamEncoder(Encoder):
 
         bypass_features = 0
         bypass_features = self.encoder_out_size
+
+        self.dg_only_no_bypass_instr = (self.Decoder_context_mod == "None")
+
         if hasattr(cfg, "depth_sensor"):
            log.info(f"denpth_sensor {cfg.depth_sensor}")
            if self.depth_sensor:
                 log.info(f"denpth_sensor {self.depth_sensor}")
                 depth_size = self.depth_encoder.get_out_size()
-                if self.DG_context_mod != "None" and self.Decoder_context_mod == "None":
+                if self.dg_only_no_bypass_instr:
                    bypass_features = depth_size
                 else:
                    bypass_features = depth_size + self.instructions_lstm_units
            else:
-               if self.DG_context_mod != "None" and self.Decoder_context_mod == "None":
+               if self.dg_only_no_bypass_instr:
                     bypass_features = 0
                else:
                    bypass_features = self.instructions_lstm_units
@@ -715,6 +716,9 @@ class HipposlamEncoder(Encoder):
             self.bypass = True
             tmp_out_size += bypass_features
             log.info(f"using bypass, dim {bypass_features}")
+        else:
+            self.bypass = False
+            log.info(f"not using bypass, dim {bypass_features}")
 
         self.encoder_out_size = tmp_out_size
         #log.info(f"!!! DEBUG: INIT CALCULATED SIZE: {self.encoder_out_size} !!!")
@@ -807,13 +811,16 @@ class HipposlamEncoder(Encoder):
         if DG_mod != "None" and Dec_mod == "None":
                 # 1. DG-only context: instructions modulate DG, do NOT go to decoder/bypass
             embedded_instr = self.instruction_embed_layer(last_outputs)
-            
                 # No concat of instructions into x here: context only via embedded_instr
             if DG_mod == "multiply":
                 tmp_out = self.DG_projection(x, context=embedded_instr)
             elif DG_mod == "sigmoid":
                 embedded_instr = torch.sigmoid(embedded_instr)
                 tmp_out = self.DG_projection(x) * embedded_instr
+            elif DG_mod == "concat":
+                # Concatenate the instructions with the input
+                x_cat = torch.cat((x, last_outputs), dim=1)
+                tmp_out = self.DG_projection(x_cat)
             else:
                 tmp_out = self.DG_projection(x)
             
@@ -827,9 +834,6 @@ class HipposlamEncoder(Encoder):
                 # 2. Decoder-only context: DG/core see no instructions; decoder gets them via bypass/decoder_context
             tmp_out = self.DG_projection(x)
             
-                # Context for decoder (embedded or raw)
-            decoder_context = self.instruction_embed_layer(last_outputs)
-            
                 # Bypass carries instructions (and depth if present)
             if self.depth_sensor:
                 bypass_out = torch.cat((depth_out, last_outputs), dim=1)
@@ -840,16 +844,16 @@ class HipposlamEncoder(Encoder):
                 # 3. DG + Decoder context: instructions modulate DG AND are visible to decoder
             embedded_instr = self.instruction_embed_layer(last_outputs)
             
-                # Core/DG input includes instructions
-            x_cat = torch.cat((x, last_outputs), dim=1)
-            
             if DG_mod == "multiply":
-                tmp_out = self.DG_projection(x_cat, context=embedded_instr)
+                tmp_out = self.DG_projection(x, context=embedded_instr)
             elif DG_mod == "sigmoid":
                 embedded_instr = torch.sigmoid(embedded_instr)
-                tmp_out = self.DG_projection(x_cat) * embedded_instr
-            else:
+                tmp_out = self.DG_projection(x) * embedded_instr
+            elif DG_mod == "concat":
+                x_cat = torch.cat((x, last_outputs), dim=1)
                 tmp_out = self.DG_projection(x_cat)
+            else:
+                tmp_out = self.DG_projection(x)
             
             decoder_context = embedded_instr  # decoder sees context too
             
@@ -876,6 +880,17 @@ class HipposlamEncoder(Encoder):
             
             # If you want decoder_context used later, you need to return it or stash it;
             # for now, we just return tmp_out as before.
+        
+        # DEBUG #
+        log.warning(
+            "ENCODER: DG_mod=%s Dec_mod=%s x=%s tmp_out=%s bypass_out=%s bypass=%s",
+            DG_mod,
+            Dec_mod,
+            tuple(x.shape),
+            tuple(tmp_out.shape),
+            tuple(bypass_out.shape),
+            self.bypass,
+        )
         return tmp_out
 
     def get_out_size(self) -> int:

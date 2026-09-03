@@ -49,7 +49,7 @@ _params = ParamGrid(
 
 
 
-vstr = "1146_norew_INSTR"
+vstr = "debugsig_SS_norew_INSTR"
 prj = "ENC_DEC_ymaze_norew_instr"
 
 cli = (
@@ -94,7 +94,7 @@ cli = (
     "--decoder_mlp_layers 64 64 "
     "--env_frameskip=8 "
     "--dmlab_reduced_action_set=True "
-    "--core_name=BypassSS "
+    "--core_name=simple_sequence "
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
     "--learning_rate=0.0002 "
@@ -113,7 +113,7 @@ cli = (
     "--depth_sensor=True "
     "--normalize_input=False "
     "--Hippo_L=64 "
-    "--rnn_size=1146 " # default was 1149, 
+    "--rnn_size=1136 " # default was 1149, 3 was instr and 10 depth, 1149-13=1136
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 " 
     #"--ppo_clip_ratio=0.25 " 
@@ -121,7 +121,7 @@ cli = (
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
-    "--DG_context_mod=concat " # BE CAREFUL
+    "--DG_context_mod=sigmoid " # BE CAREFUL
     "--Decoder_context_mod=None " # BE CAREFUL
     "--reward_scale=0.01 " ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)
 )

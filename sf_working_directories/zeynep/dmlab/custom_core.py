@@ -599,6 +599,17 @@ class SimpleSequenceWithBypassCore(ModelCore):
         # Total output dimension when bypass features are concatenated.
         self.total_output_size = self.core_output_size + self.bypass_size
 
+        #DEBUG
+        log.info(
+            "BYPASS CORE INIT: input_size=%d, core_input=%d, bypass_size=%d, "
+            "core_output_size=%d, total_output_size=%d",
+            input_size,
+            self.Hippo_n_feature,
+            self.bypass_size,
+            self.core_output_size,
+            self.total_output_size,
+        )
+
     def forward(self, head_output, rnn_states):
         """
         Args:
@@ -713,6 +724,13 @@ class SimpleSequenceWithBypassCore(ModelCore):
             else:
                 out = flat_core
                 new_rnn_state = flat_core
+
+            #DEBUG
+            log.warning(
+                "BYPASS CORE FORWARD: out=%s new_rnn_state=%s",
+                tuple(out.shape),
+                tuple(new_rnn_state.shape),
+            )
             return out, new_rnn_state
 
     def get_out_size(self) -> int:

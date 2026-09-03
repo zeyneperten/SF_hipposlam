@@ -69,7 +69,7 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
     )
     ## ADDED ##
     #p.add_argument("--INSTR_modulation", default="concatenate", type=str, choices=["concatenate", "multiply", "sigmoid"], help="How to embed the instruction input to visual features.'Multiply': Instructions modulates DG.")
-    p.add_argument("--DG_context_mod", default="None", type=str, choices=["None", "multiply", "sigmoid"], help="Whether to use context modulation in the DG layer.")
+    p.add_argument("--DG_context_mod", default="None", type=str, choices=["None", "concat", "multiply", "sigmoid"], help="Whether to use context modulation in the DG layer.")
     p.add_argument("--Decoder_context_mod", default="None", type=str, choices=["None", "enter"], help="Whether to use context modulation in the decoder layer.")
     p.add_argument("--reward_input", default=False, type=bool, help="Whether to use the reward input as an additional input to the encoder.")
     p.add_argument("--context_decoder", default=False, type=bool, help="Whether to introduce context to decoder.")

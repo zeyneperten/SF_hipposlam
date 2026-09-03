@@ -307,6 +307,14 @@ class InferenceWorker(HeartbeatStoppableEventLoopObject, Configurable):
                 signals_to_send[actor_idx] = [payload]
 
         output_indices = tuple(np.array(output_indices).T)
+
+        # ADDED DEBUG #
+        log.warning(
+            "INFERENCE OUTPUT: output_tensors=%s, target=%s, output_indices=%s",
+            output_tensors.shape,
+            self.policy_output_tensors[device][output_indices].shape,
+            output_indices,
+        )
         self.policy_output_tensors[device][output_indices] = output_tensors.numpy()
 
         # this should be a no-op unless we have a non-batched env with observations on gpu
