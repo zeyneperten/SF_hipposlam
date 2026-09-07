@@ -113,6 +113,7 @@ cli = (
     "--depth_sensor=True "
     "--normalize_input=False "
     "--Hippo_L=64 "
+    "--Hippo_R=8 "
     "--rnn_size=1136 " # default was 1149, 3 was instr and 10 depth, 1149-13=1136
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 " 

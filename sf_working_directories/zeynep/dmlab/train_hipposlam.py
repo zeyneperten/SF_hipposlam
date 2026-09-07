@@ -98,7 +98,7 @@ def parse_dmlab_args(argv=None, evaluation=False):
     add_dmlab_env_args(parser)
     hipposlam_override_defaults(parser)
     cfg = parse_full_cfg(parser, argv)
-    maybe_overwrite_rnn_size(cfg) 
+    #maybe_overwrite_rnn_size(cfg) 
     return cfg
 
 

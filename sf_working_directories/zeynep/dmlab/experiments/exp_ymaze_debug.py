@@ -6,11 +6,12 @@ _params = ParamGrid(
         # Positional encoding sweep
         # -------------------------------------------------
         # Seeds
-        #("seed", [1111, 2222, 3333, 4444, 5555]),
+        ("seed", [1111, 2222, 3333, 4444, 5555]),
         #("number_instruction_coef", [9, 200]),
         #("reward_scale", [0.01, 0.1, 1.0]),
-        #("learning_rate", [0.00002, 0.0001, 0.0002]),
-        ("seed", [2222]),
+        ("learning_rate", [0.00002, 0.0001]),
+        ("DG_context_mod", ["concat", "multiply", "sigmoid"]),
+        #("seed", [2222]),
     ]
 )
 
@@ -49,13 +50,13 @@ _params = ParamGrid(
 
 
 
-vstr = "1146_norew_INSTR"
-prj = "ENC_DEC_ymaze_norew_instr"
+vstr = "encoderonly_norew_INSTR"
+prj = "ENC_DECymaze_norew_instr"
 
 cli = (
     "--env=ymaze_instr "
     f"--wandb_project={prj} "
-    "--seed=42 "
+    #"--seed=42 "
     "--train_for_seconds=144000 "
     "--algo=APPO "
     "--gamma=0.99 "
@@ -97,10 +98,10 @@ cli = (
     "--core_name=BypassSS "
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
-    "--learning_rate=0.0002 "
+    #"--learning_rate=0.0002 "
     "--fix_encoder_when_load=True "
     # "--encoder_load_path=/home/fr/fr_xl1014/training/best_000025288_203030528_reward_94.185.pth "
-    "--with_wandb=False " # set True to log to wandb, False to log to tensorboard 
+    "--with_wandb=True " # set True to log to wandb, False to log to tensorboard 
     "--wandb_user=xiaoxionglin-bernstein-center-freiburg "
     "--pbt_mix_policies_in_one_env=False "
     "--pbt_target_objective=lenweighted_score "
@@ -113,7 +114,8 @@ cli = (
     "--depth_sensor=True "
     "--normalize_input=False "
     "--Hippo_L=64 "
-    "--rnn_size=1146 " # default was 1149, 
+    "--Hippo_R=8 "
+    "--rnn_size=1146 " # (16 * (64 + 8-1)) + (10 depth)
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 " 
     #"--ppo_clip_ratio=0.25 " 
@@ -121,9 +123,9 @@ cli = (
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
-    "--DG_context_mod=concat " # BE CAREFUL
+    #"--DG_context_mod=sigmoid " # BE CAREFUL
     "--Decoder_context_mod=None " # BE CAREFUL
-    "--reward_scale=0.01 " ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)
+    "--reward_scale=0.1 " ## LOWERED FROM 1
 )
 
 _experiments = [

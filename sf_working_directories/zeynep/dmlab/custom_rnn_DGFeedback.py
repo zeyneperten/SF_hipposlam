@@ -1,6 +1,3 @@
-import numbers
-import weakref
-import warnings
 from typing import Optional, overload
 
 import torch
@@ -163,16 +160,27 @@ class CustomRNN(RNNBase):
         W_hh_base = weights[idx]
         #new_W_hh = W_hh_base + self.lr_column @ self.lr_row
 
-        # UNIT NORMALIZATION #
-        direction = F.normalize(
-            self.lr_row,
+        # UNIT NORMALIZATION of lr_row #
+        #direction = F.normalize(
+        #    self.lr_row,
+        #    p=2.0,
+        #    dim=None,
+        #    eps=1e-8,
+        #    )
+
+        #W_feedback = direction
+        #delta_W_hh = self.lr_column @ W_feedback
+        #new_W_hh = W_hh_base + delta_W_hh
+        ###
+
+        # UNIT NORMALIZATION of delta_W_hh #
+        raw_delta = self.lr_column @ self.lr_row
+        delta_W_hh = F.normalize(
+            raw_delta,
             p=2.0,
             dim=None,
             eps=1e-8,
-            )
-
-        W_feedback = direction
-        delta_W_hh = self.lr_column @ W_feedback
+        )
         new_W_hh = W_hh_base + delta_W_hh
         ###
 
@@ -332,7 +340,15 @@ class CustomRNN(RNNBase):
         
         if self._feedback_forward_count % 50 == 0:
             with torch.no_grad():
-                log.debug(f"hidden_abs_max={hidden.abs().max().item():.4g},\noutput_abs_max={output.abs().max().item():.8g}")
+                log.debug(
+                    "LoRA recurrent diagnostics: "
+                    f"lr_row_raw_norm={torch.linalg.vector_norm(self.lr_row).item():.6g}, "
+                    f"delta_W_hh_fro={torch.linalg.matrix_norm(delta_W_hh, ord='fro').item():.6g}, "
+                    f"W_hh_base_fro={torch.linalg.matrix_norm(W_hh_base, ord='fro').item():.6g}, "
+                    f"W_hh_eff_fro={torch.linalg.matrix_norm(new_W_hh, ord='fro').item():.6g}, "
+                    f"output_abs_max={output.detach().abs().max().item():.6g}, "
+                    f"hidden_abs_max={hidden.detach().abs().max().item():.6g}"
+                )
 
         if isinstance(orig_input, PackedSequence) and self._feedback_forward_count % 50 == 0:
             with torch.no_grad():
