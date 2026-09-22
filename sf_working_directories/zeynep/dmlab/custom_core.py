@@ -12,6 +12,7 @@ from sample_factory.utils.utils import log
 from sf_working_directories.zeynep.dmlab.custom_weights_DGFeedback import generate_shift_register_weights
 #from sf_working_directories.zeynep.dmlab.custom_rnn_DGFeedback import CustomRNN
 from sf_working_directories.zeynep.dmlab.custom_rnn_boundedfeedback import CustomRNN
+from sf_working_directories.zeynep.dmlab.custom_contextRNN import ContextRNN # to wrap any core with context inference module
 
 class FixedRNNSequenceCore(ModelCore):
     def __init__(self, cfg, input_size):
@@ -72,7 +73,7 @@ class FixedRNNSequenceCore(ModelCore):
         # Freeze the weights so that they are not updated during training.
         for param in self.rnn.parameters():
             param.requires_grad = False
-
+        
     def forward(self, head_output, rnn_states):
         """
         Args:
@@ -405,6 +406,178 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
     def get_out_size(self) -> int:
         log.debug(f"get out size called: {self.total_output_size}")
         return self.total_output_size
+
+    def summaries(self):
+        return self.rnn.summaries()
+
+class ContextRNNWrapperCore(ModelCore):
+    """
+    Wraps any existing core (e.g. BypassSS) and adds ContextRNN with explicit value decay.
+    Leaves the base core completely untouched by calling it step-by-step during training.
+    """
+    def __init__(self, cfg, input_size):
+        super().__init__(cfg)
+        
+        # 1. Instantiate the existing core
+        # Make sure to import SimpleSequenceWithBypassCore if not already imported
+        # Dimensions from the base core
+        self.Hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64)
+        self.use_reward = getattr(cfg, "reward_input", True)
+
+        base_input_size = input_size - 1 if self.use_reward else input_size
+        self.base_core = SimpleSequenceWithBypassCore(cfg, input_size=base_input_size)
+        log.warn("USING CONTEXTRNN WRAPPER")
+        self.base_core_output_size = self.base_core.total_output_size
+        self.ca3_output_size = self.base_core.core_output_size
+        
+        # 2. Instantiate the ContextRNN addition
+        self.context_hidden_size = getattr(cfg, "context_hidden_size", 6)
+        self.decoder_context_dim = getattr(cfg, "decoder_context_dim", 6)
+        
+        self.context_rnn = ContextRNN(
+            ca3_dim=self.ca3_output_size,
+            dg_dim=self.Hippo_n_feature,
+            hidden_size=self.context_hidden_size,
+            decoder_context_dim=self.decoder_context_dim,
+            dg_strength=getattr(cfg, "dg_strength", 0.1),
+            initial_decay=getattr(cfg, "context_decay", 0.95),
+            learn_decay=getattr(cfg, "learn_decay", True),
+        )
+        
+        # Variables exposed for WandB logging:
+        self.last_v_L = 0.0
+        self.last_v_R = 0.0
+        self.last_v_diff = 0.0
+        
+        # Total recurrent state: base core's states + 2 (v_prev) + ContextRNN hidden + dg_gate
+        self.total_state_size = (
+            self.base_core.total_output_size
+            + 2  # <--- Added for v_L and v_R
+            + self.context_hidden_size
+            + self.Hippo_n_feature
+        )
+        
+        # Total output fed to the Decoder: base core output + decoder_context
+        self.total_output_size = self.base_core_output_size + self.decoder_context_dim
+
+    def get_out_size(self) -> int:
+        return self.total_output_size
+
+    def forward(self, head_output, rnn_states):
+        # --- Safely handle PackedSequences ---
+        is_packed = isinstance(head_output, PackedSequence)
+        if is_packed:
+            head_output, lengths = pad_packed_sequence(head_output)
+
+        is_bptt = head_output.dim() == 3
+
+        base_sz = self.base_core_output_size
+        ctx_sz = self.context_hidden_size
+        
+        base_states = rnn_states[:, :base_sz]
+        v_prev = rnn_states[:, base_sz : base_sz + 2]
+        h_ctx_prev = rnn_states[:, base_sz + 2 : base_sz + 2 + ctx_sz]
+        dg_gate_prev = rnn_states[:, base_sz + 2 + ctx_sz :]
+
+        if not is_bptt:
+            # === INFERENCE PASS ===
+            # get the raw features from encoder, and get the previous step's dg_gate. Then modulate the current DG features and pass to base core. 
+            if getattr(self, "dg_strength", 0.0) > 0:
+                modulated_dg = head_output[:, :self.Hippo_n_feature] * (1.0 + dg_gate_prev) # if <1 DG feature is suppressed, if >1 DG feature is amplified
+            else:
+                modulated_dg = head_output[:, :self.Hippo_n_feature] 
+            
+            if self.use_reward:
+                # Strip the reward so it doesn't bypass to decoder
+                unmodulated_rest = head_output[:, self.Hippo_n_feature : -1]
+                reward_pulse = head_output[:, -1:]
+            else:
+                unmodulated_rest = head_output[:, self.Hippo_n_feature :]
+                reward_pulse = torch.zeros(head_output.shape[0], 1, device=head_output.device)
+
+            head_in = torch.cat([modulated_dg, unmodulated_rest], dim=-1) # get the new modulated DG features
+
+            base_out, base_states_new = self.base_core(head_in, base_states) # feed newly modulated features into actual CA3 core
+
+            # Slice base_out to get only the CA3 features (1136)
+            ca3_features = base_out[:, :self.ca3_output_size]
+
+            # dg_gate_next:get the dg_gate for next time step and save it to recurrent memory
+            dec_ctx, dg_gate_next, v_new, h_ctx_next = self.context_rnn(
+                reward_pulse,
+                ca3_features,
+                v_prev,
+                h_ctx_prev
+            )
+
+            with torch.no_grad():
+                self.last_v_L = v_new[:, 0].mean().item()
+                self.last_v_R = v_new[:, 1].mean().item()
+                self.last_v_diff = (v_new[:, 0] - v_new[:, 1]).abs().mean().item()
+
+            new_rnn_states = torch.cat([base_states_new, v_new, h_ctx_next, dg_gate_next], dim=-1)
+            out_total = torch.cat([base_out, dec_ctx], dim=-1) # Concatanate context with CA3 output
+
+            # Pack it back if it was packed
+            if is_packed:
+                out_total = nn.utils.rnn.pack_padded_sequence(out_total, lengths, enforce_sorted=False)
+
+            return out_total, new_rnn_states
+
+        else:
+            # === BPTT PASS ===
+            T, B = head_output.shape[:2]
+            
+            v_prev_t = v_prev
+            h_ctx_prev_t = h_ctx_prev
+            dg_gate_prev_t = dg_gate_prev
+            base_states_t = base_states
+
+            out_total_list = []
+            
+            for t in range(T):
+                if getattr(self, "dg_strength", 0.0) > 0:
+                    modulated_dg_t = head_output[t, :, :self.Hippo_n_feature] * (1.0 + dg_gate_prev_t)
+                else:
+                    modulated_dg_t = head_output[t, :, :self.Hippo_n_feature]
+
+                if self.use_reward:
+                    # Strip the reward so it doesn't bypass to decoder
+                    unmodulated_rest_t = head_output[t, :, self.Hippo_n_feature : -1]
+                    reward_pulse_t = head_output[t, :, -1:]
+                else:
+                    unmodulated_rest_t = head_output[t, :, self.Hippo_n_feature :]
+                    reward_pulse_t = torch.zeros(B, 1, device=head_output.device)
+
+                head_in_t = torch.cat([modulated_dg_t, unmodulated_rest_t], dim=-1)
+
+                base_out_t, base_states_t = self.base_core(head_in_t, base_states_t)
+
+                # Slice base_out_t to get only the CA3 features, the rest is depth
+                ca3_features_t = base_out_t[:, :self.ca3_output_size]
+                dec_ctx_t, dg_gate_prev_t, v_prev_t, h_ctx_prev_t = self.context_rnn(
+                    reward_pulse_t,
+                    ca3_features_t,
+                    v_prev_t,
+                    h_ctx_prev_t
+                )
+
+                out_total_t = torch.cat([base_out_t, dec_ctx_t], dim=-1)
+                out_total_list.append(out_total_t)
+
+            out_total_seq = torch.stack(out_total_list, dim=0)
+            new_rnn_states = torch.cat([base_states_t, v_prev_t, h_ctx_prev_t, dg_gate_prev_t], dim=-1)
+
+            with torch.no_grad():
+                self.last_v_L = v_prev_t[:, 0].mean().item()
+                self.last_v_R = v_prev_t[:, 1].mean().item()
+                self.last_v_diff = (v_prev_t[:, 0] - v_prev_t[:, 1]).abs().mean().item()
+
+            # Pack it back if it was packed
+            if is_packed:
+                out_total_seq = nn.utils.rnn.pack_padded_sequence(out_total_seq, lengths, enforce_sorted=False)
+
+            return out_total_seq, new_rnn_states
 
 
 class SimpleSequenceCore(ModelCore):
@@ -1532,6 +1705,8 @@ def make_hipposlam_core(cfg: Config, core_input_size: int) -> ModelCore:
             core = ModelCoreRNN(cfg, core_input_size)
         elif cfg.core_name == "BypassDGFeebackLORA":
             core = FixedRNNWithBypassCoreDGFeedbackLORA(cfg, core_input_size)
+        elif cfg.core_name == "BypassSS_ContextRNN":
+            core = ContextRNNWrapperCore(cfg, core_input_size)
 
     else:
         core = ModelCoreIdentity(cfg, core_input_size)

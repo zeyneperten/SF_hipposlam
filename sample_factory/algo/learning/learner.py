@@ -963,6 +963,7 @@ class DefaultLearner(BaseLearner):
             clip_ratio_low=clip_ratio_low,
             clip_ratio_high=clip_ratio_high,
             values=outputs.result["values"],
+            targets=targets,
             adv=adv,
             adv_std=adv_std,
             adv_mean=adv_mean,

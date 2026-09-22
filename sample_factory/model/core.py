@@ -17,6 +17,9 @@ class ModelCore(ModelModule, ABC):
         log.debug("get out size called: {self.core_output_size}")
         return self.core_output_size
 
+    def summaries(self):
+        return {}
+
 
 class ModelCoreRNN(ModelCore):
     def __init__(self, cfg, input_size):

@@ -122,6 +122,7 @@ cli = (
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
+    "--oracle_context=True "
     "--DG_context_mod=None " # BE CAREFUL
     "--Decoder_context_mod=enter " # BE CAREFUL
     "--reward_scale=0.01 " ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)

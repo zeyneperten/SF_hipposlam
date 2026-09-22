@@ -67,13 +67,21 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         type=bool,
         help="when loading an encoder, fix its weights at initialization",
     )
-    ## ADDED ##
-    #p.add_argument("--INSTR_modulation", default="concatenate", type=str, choices=["concatenate", "multiply", "sigmoid"], help="How to embed the instruction input to visual features.'Multiply': Instructions modulates DG.")
+
+    ##### ADDED ##### 
+    ##      Oracle context modulation parameters (DG & Decoder)      ##
     p.add_argument("--DG_context_mod", default="None", type=str, choices=["None", "concat", "multiply", "sigmoid"], help="Whether to use context modulation in the DG layer.")
-    p.add_argument("--Decoder_context_mod", default="None", type=str, choices=["None", "enter"], help="Whether to use context modulation in the decoder layer.")
+    p.add_argument("--Decoder_context_mod", default="None", type=str, choices=["None", "enter", "FiLM"], help="Whether to use context modulation in the decoder layer.")
     p.add_argument("--reward_input", default=False, type=bool, help="Whether to use the reward input as an additional input to the encoder.")
-    p.add_argument("--context_decoder", default=False, type=bool, help="Whether to introduce context to decoder.")
-    ####
+    p.add_argument("--oracle_context", default=False, type=bool, help="Whether to enable instruction-driven oracle context in the encoder.")
+    ##       Context Inference Module        ## 
+    p.add_argument("--context_hidden_size", default=6, type=int, help="Hidden size of the context RNN.") 
+    p.add_argument("--decoder_context_dim", default=6, type=int, help="Dimension of the context vector used in the decoder.") 
+    p.add_argument("--dg_strength", default=0.1, type=float, help="Strength of the context modulation in the DG layer.")
+    p.add_argument("--context_decay", default=0.95, type=float, help="Decay factor for the context RNN's value state.")
+    p.add_argument("--learn_decay", default=True, type=bool, help="Whether to learn the decay factor for the context RNN's value state via backpropagation.")
+    ###################  
+
     p.add_argument("--depth_sensor", default=False, type=bool, help="having extra depth sensor")
     p.add_argument(
         "--dmlab_reduced_action_set", default=False, type=bool, help="reduced action set to facilitate learning"

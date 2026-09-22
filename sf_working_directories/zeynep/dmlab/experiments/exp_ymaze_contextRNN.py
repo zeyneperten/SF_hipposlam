@@ -6,11 +6,12 @@ _params = ParamGrid(
         # Positional encoding sweep
         # -------------------------------------------------
         # Seeds
-        #("seed", [1111, 2222, 3333, 4444, 5555]),
+        ("seed", [1111, 2222, 3333, 4444, 5555]),
         #("number_instruction_coef", [9, 200]),
         #("reward_scale", [0.01, 0.1, 1.0]),
-        #("learning_rate", [0.00002, 0.0001, 0.0002]),
-        ("seed", [2222]),
+        #("learning_rate", [0.00002, 0.0001]),
+        #("seed", [2222]),
+        #("DG_context_mod", ["concat", "sigmoid", "multiply"]),
     ]
 )
 
@@ -47,15 +48,21 @@ _params = ParamGrid(
 #     ]
 # )
 
+#_params = ParamGrid(
+#    [
+#        ("seed", [1111, 2222, 3333, 4444, 5555]),
+#        ("learning_rate", [0.00002, 0.0001, 0.0002]),
+#        ("number_instruction_coef", [9, 200])
+#    ]
+#)
 
-
-vstr = "debugsig_SS_norew_INSTR"
-prj = "ENC_DEC_ymaze_norew_instr"
+prj = "ymaze_context_inference"
+vstr = "contextRNN"
 
 cli = (
     "--env=ymaze_instr "
     f"--wandb_project={prj} "
-    "--seed=42 "
+    # "--seed=42 "
     "--train_for_seconds=144000 "
     "--algo=APPO "
     "--gamma=0.99 "
@@ -69,7 +76,7 @@ cli = (
     "--batch_size=2048 "
     "--num_batches_per_epoch=2 "
     "--benchmark=False "
-    "--max_grad_norm=0.0 "
+    "--max_grad_norm=1.0 " # TRY THIS BECAUSE OF GRADIENT EXPLOSION WITH LORA
     "--dmlab_renderer=software "
     "--decorrelate_experience_max_seconds=120 "
     "--nonlinearity=relu "
@@ -94,13 +101,13 @@ cli = (
     "--decoder_mlp_layers 64 64 "
     "--env_frameskip=8 "
     "--dmlab_reduced_action_set=True "
-    "--core_name=simple_sequence "
+    "--core_name=BypassSS_ContextRNN " # default was set to ByPassSS or try BypassDGFeedbackLORA
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
-    "--learning_rate=0.0002 "
+    "--learning_rate=0.0002 " # default 
     "--fix_encoder_when_load=True "
     # "--encoder_load_path=/home/fr/fr_xl1014/training/best_000025288_203030528_reward_94.185.pth "
-    "--with_wandb=False " # set True to log to wandb, False to log to tensorboard 
+    "--with_wandb=True " # BE CAREFUL
     "--wandb_user=xiaoxionglin-bernstein-center-freiburg "
     "--pbt_mix_policies_in_one_env=False "
     "--pbt_target_objective=lenweighted_score "
@@ -108,24 +115,30 @@ cli = (
     "--save_best_metric=lenweighted_score "
     "--device=cpu "
     "--Hippo_n_feature=16 "
-    "--number_instruction_coef=200 " ## increase if needed
+    #"--number_instruction_coef=9 "
     "--DG_BN_intercept=2.43 "
     "--depth_sensor=True "
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1136 " # default was 1149, 3 was instr and 10 depth, 1149-13=1136
+    "--rnn_size=1170 " # 1146 is without bypass. We add + 6 context RNN hidden size and + 16 DG modulatory gate and + 2 value states, 1146 + 6 + 16 + 2 = 1170
     # "--exploration_loss_coeff=0.005 "
-    # "--value_loss_coeff=0.3 " 
-    #"--ppo_clip_ratio=0.25 " 
+    # "--value_loss_coeff=0.3 "
+    # "--ppo_clip_ratio=0.25 "
     # "--pbt_perturb_max=1.3 "
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
-    "--DG_context_mod=sigmoid " # BE CAREFUL
-    "--Decoder_context_mod=None " # BE CAREFUL
-    "--reward_scale=0.01 " ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)
+    "--reward_input=True " # add + 1 to rnn size
+    "--DG_context_mod=None "
+    "--oracle_context=False "
+    "--Decoder_context_mod=None "
+    "--reward_scale=0.1 " # default 1 LOWERED BECAUSE OF TOO HIGH VALUE LOSS
 )
+
+
+_experiments = []
+
 
 _experiments = [
     Experiment(vstr, cli, _params.generate_params(False)),

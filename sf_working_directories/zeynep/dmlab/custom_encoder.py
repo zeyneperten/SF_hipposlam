@@ -581,15 +581,16 @@ class HipposlamEncoder(Encoder):
 
         self.DG_context_mod = getattr(cfg, "DG_context_mod", "None") ## ADDED 
         self.Decoder_context_mod = getattr(cfg, "Decoder_context_mod", "None") ## ADDED 
+        self.oracle_context = getattr(cfg, "oracle_context", False)
         
         self.reward_input = getattr(cfg, "reward_input", False) ## ADDED 
 
         self.with_number_instruction = cfg.with_number_instruction
         self.number_instruction_coef = getattr(cfg, "number_instruction_coef", 1)
-        if self.with_number_instruction:
+        if self.oracle_context and self.with_number_instruction:
             # repurposed it to encode map number
             self.instructions_lstm_units = 2
-        else:
+        elif self.oracle_context:
             # same as IMPALA paper
             self.embedding_size = 20
             self.instructions_lstm_units = 64
@@ -606,6 +607,8 @@ class HipposlamEncoder(Encoder):
                 num_layers=self.instructions_lstm_layers,
                 batch_first=True,
             )
+        else:
+            self.instructions_lstm_units = 0
 
         # learnable initial state?
         # initial_hidden_values = torch.normal(0, 1, size=(self.instructions_lstm_units, ))
@@ -615,28 +618,13 @@ class HipposlamEncoder(Encoder):
         #self.encoder_out_size += self.instructions_lstm_units 
 
         # Instructions enter DG only in concat mode. Instead of doing substraction like previously, we will add them to the encoder output size only in concat mode. 31.08.26
-        if self.DG_context_mod == "concat":
+        if self.oracle_context and self.DG_context_mod == "concat":
             self.encoder_out_size += self.instructions_lstm_units
 
-        needs_context = self.DG_context_mod != "None" or self.Decoder_context_mod != "None"
+        needs_context = self.oracle_context and (self.DG_context_mod != "None" or self.Decoder_context_mod != "None")
         if needs_context:
             self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
         ###################################################################################################
-
-        ### ADDED reward_input to the encoder output, so that we can use it for DG projection ###
-        # Number of scalar features for reward input (e.g. 1 float)
-        self.reward_input_dim = 0
-
-        if self.reward_input:
-            self.reward_input_dim = 1
-            self.encoder_out_size += self.reward_input_dim
-
-            if self.DG_context_mod != "None":
-                self.reward_embed_layer = nn.Linear(
-                    self.reward_input_dim,
-                    cfg.Hippo_n_feature,
-                )
-        ##########################################################################################
 
         log.info("DMLab policy head output size: %r", self.encoder_out_size)
 
@@ -695,12 +683,11 @@ class HipposlamEncoder(Encoder):
         bypass_features = 0
         bypass_features = self.encoder_out_size
 
-        self.dg_only_no_bypass_instr = (self.Decoder_context_mod == "None")
+        self.dg_only_no_bypass_instr = self.oracle_context and (self.Decoder_context_mod == "None")
 
         if hasattr(cfg, "depth_sensor"):
            log.info(f"denpth_sensor {cfg.depth_sensor}")
            if self.depth_sensor:
-                log.info(f"denpth_sensor {self.depth_sensor}")
                 depth_size = self.depth_encoder.get_out_size()
                 if self.dg_only_no_bypass_instr:
                    bypass_features = depth_size
@@ -719,6 +706,12 @@ class HipposlamEncoder(Encoder):
         else:
             self.bypass = False
             log.info(f"not using bypass, dim {bypass_features}")
+        
+        ### ADDED reward_input to the encoder output, so that we can use it for DG projection ###
+        # Number of scalar features for reward input (e.g. 1 float)
+        if self.reward_input:
+            tmp_out_size += 1 
+        ##########################################################################################
 
         self.encoder_out_size = tmp_out_size
         #log.info(f"!!! DEBUG: INIT CALCULATED SIZE: {self.encoder_out_size} !!!")
@@ -730,10 +723,11 @@ class HipposlamEncoder(Encoder):
 
     def model_to_device(self, device):
         self.to(device)
-        if self.with_number_instruction:
+        if self.oracle_context and self.with_number_instruction:
             return
-        self.word_embedding.to(self.cpu_device)
-        self.instructions_lstm.to(self.cpu_device)
+        if self.oracle_context:
+            self.word_embedding.to(self.cpu_device)
+            self.instructions_lstm.to(self.cpu_device)
 
     def device_for_input_tensor(self, input_tensor_name: str) -> torch.device:
         if input_tensor_name == DMLAB_INSTRUCTIONS:
@@ -761,10 +755,9 @@ class HipposlamEncoder(Encoder):
                 device=x.device,
                 dtype=x.dtype,
             ).reshape(x.shape[0], 1)
-            x = torch.cat((x, reward_feat), dim=1)
         ###########
 
-        if self.with_number_instruction:
+        if self.oracle_context and self.with_number_instruction:
             instr = obs_dict[DMLAB_INSTRUCTIONS]
 
             last_outputs = (
@@ -773,7 +766,7 @@ class HipposlamEncoder(Encoder):
             #log.info(last_outputs) # this should be a tensor of shape [batch_size, 3] with one-hot encoding of the instruction number
             #log.info(f"Batch Instructions: {current_instructions} | Encoded Shape: {last_outputs.shape}")
 
-        else:
+        elif self.oracle_context:
 
             with torch.no_grad():
                 instr = obs_dict[DMLAB_INSTRUCTIONS]
@@ -795,12 +788,14 @@ class HipposlamEncoder(Encoder):
             first_dim_idx = torch.arange(rnn_outputs.shape[0])
             last_output_idx = sequence_lengths - 1
             last_outputs = rnn_outputs[first_dim_idx, last_output_idx]
+        else:
+            last_outputs = None
 
-        last_outputs = last_outputs.to(x.device)  # for some reason this is very slow
+        if last_outputs is not None:
+            last_outputs = last_outputs.to(x.device)  # for some reason this is very slow
 
-        DG_mod = self.DG_context_mod
-        Dec_mod = self.Decoder_context_mod
-        decoder_context = None
+        DG_mod = self.DG_context_mod if self.oracle_context else "None"
+        Dec_mod = self.Decoder_context_mod if self.oracle_context else "None"
 
         depth_out = None
         if self.depth_sensor:
@@ -855,8 +850,6 @@ class HipposlamEncoder(Encoder):
             else:
                 tmp_out = self.DG_projection(x)
             
-            decoder_context = embedded_instr  # decoder sees context too
-            
                 # Bypass also carries raw instructions (and depth if present)
             if self.depth_sensor:
                 bypass_out = torch.cat((depth_out, last_outputs), dim=1)
@@ -871,26 +864,26 @@ class HipposlamEncoder(Encoder):
             else:
                 bypass_out = x
             
-            # ===== Existing bypass / dense handling =====
         if self.bypass:
             tmp_out = torch.cat((tmp_out, bypass_out), dim=1)
         elif hasattr(self, "dense"):
             dense_out = self.dense(x)
             tmp_out = torch.cat((tmp_out, dense_out), dim=1)
-            
-            # If you want decoder_context used later, you need to return it or stash it;
-            # for now, we just return tmp_out as before.
         
         # DEBUG #
-        log.warning(
-            "ENCODER: DG_mod=%s Dec_mod=%s x=%s tmp_out=%s bypass_out=%s bypass=%s",
-            DG_mod,
-            Dec_mod,
-            tuple(x.shape),
-            tuple(tmp_out.shape),
-            tuple(bypass_out.shape),
-            self.bypass,
-        )
+        #log.warning(
+        #    "ENCODER: DG_mod=%s Dec_mod=%s x=%s tmp_out=%s bypass_out=%s bypass=%s",
+        #    DG_mod,
+        #    Dec_mod,
+        #    tuple(x.shape),
+        #    tuple(tmp_out.shape),
+        #    tuple(bypass_out.shape),
+        #    self.bypass,
+        #)
+
+        ### ADDED REWARD SO THAT IT DOESN'T GO THROUGH DG PROJECTION, BUT IS CONCATENATED TO THE OUTPUT OF THE ENCODER ###
+        if self.reward_input:
+            tmp_out = torch.cat((tmp_out, reward_feat), dim=1)
         return tmp_out
 
     def get_out_size(self) -> int:

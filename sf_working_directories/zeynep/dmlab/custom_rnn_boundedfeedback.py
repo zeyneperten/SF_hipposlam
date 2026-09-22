@@ -1,4 +1,4 @@
-from typing import Optional, overload
+from typing import Dict, Optional, overload
 
 import torch
 from torch import _VF, Tensor
@@ -76,7 +76,7 @@ class CustomRNN(RNNBase):
 
         super().__init__(mode, *args, **kwargs)
 
-        # change the rnn constructor to include low rank adaptation  #Idee: mach das zum parameter aber nicht teil der offiziellen liste, damit es trainiert wird aber nicht an den c code übergeben wird
+        # change the rnn constructor to include low rank adaptation  
         # B
         self.lr_column = Parameter(
             torch.empty((self.hidden_size, self.rank), **factory_kwargs)
@@ -92,6 +92,36 @@ class CustomRNN(RNNBase):
         self._feedback_forward_count = 0
 
         self.feedback_norm = torch.nn.LayerNorm(self.hidden_size, elementwise_affine=False)
+        self._last_forward_summaries: Dict[str, float] = {}
+
+    def summaries(self) -> Dict[str, float]:
+        return dict(self._last_forward_summaries)
+
+    def _set_last_forward_summaries(
+        self,
+        state_abs_max,
+        feedback_abs_max,
+        empirical_gain,
+    ) -> None:
+        if len(state_abs_max) == 0:
+            self._last_forward_summaries = {}
+            return
+
+        state_per_t = torch.stack(state_abs_max)
+        feedback_per_t = torch.stack(feedback_abs_max)
+        gain_per_t = torch.stack(empirical_gain)
+
+        self._last_forward_summaries = {
+            "rnn/ca3_abs_max": float(state_per_t.max()),
+            "rnn/ca3_abs_mean": float(state_per_t.mean()),
+            "rnn/ca3_abs_last": float(state_per_t[-1]),
+            "rnn/feedback_abs_max": float(feedback_per_t.max()),
+            "rnn/feedback_abs_mean": float(feedback_per_t.mean()),
+            "rnn/feedback_abs_last": float(feedback_per_t[-1]),
+            "rnn/effective_recurrence_gain_max": float(gain_per_t.max()),
+            "rnn/effective_recurrence_gain_mean": float(gain_per_t.mean()),
+            "rnn/effective_recurrence_gain_last": float(gain_per_t[-1]),
+        }
 
 
     def set_fixed_weights(self, W_in, W_hh):
@@ -198,7 +228,7 @@ class CustomRNN(RNNBase):
         else:
             h_new = torch.tanh(pre_activation)
 
-        return h_new, feedback
+        return h_new, feedback, raw_feedback
 
     def _forward_bounded_feedback_tensor(
         self,
@@ -207,13 +237,6 @@ class CustomRNN(RNNBase):
     ) -> tuple[Tensor, Tensor]:
         """
         Explicit bounded-feedback recurrence for non-packed RNN input.
-
-        Supports:
-            - num_layers == 1
-            - bidirectional == False
-            - dropout == 0
-            - tanh or relu
-            - batch_first True or False
         """
         if self.num_layers != 1:
             raise NotImplementedError(
@@ -301,11 +324,11 @@ class CustomRNN(RNNBase):
         # One scalar Tensor per timestep.
         state_abs_max = []
         feedback_abs_max = []
-        raw_feedback_abs_max = []
-        preactivation_abs_max = []
+        empirical_gain = []
 
         for t in range(T):
             x_t = input_batched[:, t, :]
+            h_prev = h
 
             h_new, feedback, raw_feedback = self._bounded_feedback_step(
                 x_t=x_t,
@@ -354,7 +377,16 @@ class CustomRNN(RNNBase):
 
             state_abs_max.append(h_new_max)
             feedback_abs_max.append(feedback_max)
-            raw_feedback_abs_max.append(raw_feedback.detach().abs().max())
+
+            prev_norm = h_prev.detach().norm(p=2)
+            next_norm = h_new.detach().norm(p=2)
+            empirical_gain.append(next_norm / prev_norm.clamp_min(1e-8))
+
+        self._set_last_forward_summaries(
+            state_abs_max=state_abs_max,
+            feedback_abs_max=feedback_abs_max,
+            empirical_gain=empirical_gain,
+        )
 
         output_batched = torch.stack(outputs, dim=1)
         hidden = h.unsqueeze(0)
@@ -369,22 +401,19 @@ class CustomRNN(RNNBase):
             with torch.no_grad():
                 state_per_t = torch.stack(state_abs_max)
                 feedback_per_t = torch.stack(feedback_abs_max)
-                raw_feedback_per_t = torch.stack(raw_feedback_abs_max)
 
                 log.debug(
                     "Bounded-feedback tensor summary: "
                     f"batch={B}, timesteps={T}, "
                     f"ca3_abs_max={state_per_t.max().item():.6g}, "
                     f"feedback_abs_max={feedback_per_t.max().item():.6g}, "
-                    f"raw_feedback_abs_max={raw_feedback_per_t.max().item():.6g}, "
                     f"final_hidden_abs_max={hidden.detach().abs().max().item():.6g}"
                 )
 
                 log.debug(
                     "Bounded-feedback tensor timestep maxima: "
                     f"ca3={state_per_t.cpu().tolist()}, "
-                    f"feedback={feedback_per_t.cpu().tolist()}, "
-                    f"raw_feedback={raw_feedback_per_t.cpu().tolist()}"
+                    f"feedback={feedback_per_t.cpu().tolist()}"
                 )
 
         # Return to the input layout expected by torch.nn.RNN.
@@ -492,7 +521,7 @@ class CustomRNN(RNNBase):
         # One scalar Tensor per packed timestep.
         state_abs_max = []
         feedback_abs_max = []
-        raw_feedback_abs_max = []
+        empirical_gain = []
 
         offset = 0
 
@@ -502,6 +531,7 @@ class CustomRNN(RNNBase):
             # The first active_batch_size rows are the active sorted sequences.
             x_t = data[offset : offset + active_batch_size]
             h_active = h[:active_batch_size]
+            h_prev = h_active
 
             h_new, feedback, raw_feedback = self._bounded_feedback_step(
                 x_t=x_t,
@@ -552,9 +582,18 @@ class CustomRNN(RNNBase):
 
             state_abs_max.append(h_new_max)
             feedback_abs_max.append(feedback_max)
-            raw_feedback_abs_max.append(raw_feedback.detach().abs().max())
+
+            prev_norm = h_prev.detach().norm(p=2)
+            next_norm = h_new.detach().norm(p=2)
+            empirical_gain.append(next_norm / prev_norm.clamp_min(1e-8))
 
             offset += active_batch_size
+
+        self._set_last_forward_summaries(
+            state_abs_max=state_abs_max,
+            feedback_abs_max=feedback_abs_max,
+            empirical_gain=empirical_gain,
+        )
 
         if offset != data.shape[0]:
             raise RuntimeError(
@@ -588,7 +627,6 @@ class CustomRNN(RNNBase):
             with torch.no_grad():
                 state_per_t = torch.stack(state_abs_max)
                 feedback_per_t = torch.stack(feedback_abs_max)
-                raw_feedback_per_t = torch.stack(raw_feedback_abs_max)
 
                 log.debug(
                     "Bounded-feedback packed summary: "
@@ -596,15 +634,13 @@ class CustomRNN(RNNBase):
                     f"max_batch={max_batch_size}, "
                     f"ca3_abs_max={state_per_t.max().item():.6g}, "
                     f"feedback_abs_max={feedback_per_t.max().item():.6g}, "
-                    f"raw_feedback_abs_max={raw_feedback_per_t.max().item():.6g}, "
                     f"final_hidden_abs_max={hidden.detach().abs().max().item():.6g}"
                 )
 
                 log.debug(
                     "Bounded-feedback packed timestep maxima: "
                     f"ca3={state_per_t.cpu().tolist()}, "
-                    f"feedback={feedback_per_t.cpu().tolist()}, "
-                    f"raw_feedback={raw_feedback_per_t.cpu().tolist()}"
+                    f"feedback={feedback_per_t.cpu().tolist()}"
                 )
 
         return output_packed, hidden
