@@ -9,7 +9,9 @@ _params = ParamGrid(
         ("seed", [1111, 2222, 3333, 4444, 5555]),
         #("number_instruction_coef", [9, 200]),
         #("reward_scale", [0.01, 0.1, 1.0]),
-        #("learning_rate", [0.00002, 0.0001, 0.0002]),
+        #("learning_rate", [0.00002, 0.0001]),
+        ("DG_context_mod", ["concat", "multiply", "sigmoid"]),
+        ("Decoder_context_mod", ["enter", "FiLM", "additive"])
         #("seed", [2222]),
     ]
 )
@@ -49,13 +51,13 @@ _params = ParamGrid(
 
 
 
-vstr = "beforeMLP_additive_decoderonly_norew_INSTR"
+vstr = "stage0_INSTR_ablation"
 prj = "ENC_DECymaze_norew_instr"
 
 cli = (
     "--env=ymaze_instr "
     f"--wandb_project={prj} "
-    "--seed=42 "
+    #"--seed=42 "
     "--train_for_seconds=144000 "
     "--algo=APPO "
     "--gamma=0.99 "
@@ -97,7 +99,7 @@ cli = (
     "--core_name=BypassSS "
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
-    "--learning_rate=0.0002 "
+    #"--learning_rate=0.0002 "
     "--fix_encoder_when_load=True "
     # "--encoder_load_path=/home/fr/fr_xl1014/training/best_000025288_203030528_reward_94.185.pth "
     "--with_wandb=True " # set True to log to wandb, False to log to tensorboard 
@@ -114,7 +116,7 @@ cli = (
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1148 " # default was 1149, 3 was instr and 10 depth, 1149-13=1136
+    "--rnn_size=1148 " # (16 * (64 + 8-1)) + (10 depth) + 2
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 " 
     #"--ppo_clip_ratio=0.25 " 
@@ -122,10 +124,10 @@ cli = (
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
-    "--DG_context_mod=None " # BE CAREFUL
-    "--Decoder_context_mod=additive " # BE CAREFUL
     "--oracle_context=True "
-    "--reward_scale=0.01 " ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)
+    #"--DG_context_mod=sigmoid " # BE CAREFUL
+    #"--Decoder_context_mod=None " # BE CAREFUL
+    "--reward_scale=0.1 " ## LOWERED FROM 1
 )
 
 _experiments = [

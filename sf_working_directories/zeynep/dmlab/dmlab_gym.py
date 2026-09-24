@@ -352,7 +352,7 @@ class DmlabGymEnv_custom(gym.Env):
             'highrew_hit', 'highrew_miss', 'lowrew_hit', 'lowrew_miss',
             'highrew_hit_total', 'highrew_miss_total',
             'lowrew_hit_total', 'lowrew_miss_total',
-            'flexibility', 'inst_block'
+            'flexibility', 'inst_block', 'outcome_event', 'prev_trial_reward'
         ]
 
         self.reward_input = reward_input
@@ -361,7 +361,7 @@ class DmlabGymEnv_custom(gym.Env):
         else:
             log.debug("REWARD INPUT IS ENABLED")
             observation_format += ["reward_input"]
-            
+
         # Initialize step-tracking temporary pulse variables
         self._temp_hi_hit = 0.0
         self._temp_hi_miss = 0.0
@@ -386,6 +386,11 @@ class DmlabGymEnv_custom(gym.Env):
         if extra_cfg is not None:
             config.update(extra_cfg)
         config = {k: str(v) for k, v in config.items()}
+
+        self.high_level=False
+        if extra_cfg is not None and "HighLevel" in config.get("core_name", ""):
+            self.high_level=True
+            log.debug("HighLevel mode is enabled for this environment!")
 
         self.render_mode: Optional[str] = render_mode
 
@@ -458,6 +463,25 @@ class DmlabGymEnv_custom(gym.Env):
                 shape=(1,),
                 dtype=np.float32,
             )
+
+        self.observation_space.spaces["outcome_event"] = gym.spaces.Box(
+            low=0.0,
+            high=1.0,
+            shape=(1,),
+            dtype=np.float32,
+        )
+        self.observation_space.spaces["prev_trial_reward"] = gym.spaces.Box(
+            low=0.0,
+            high=1.0,
+            shape=(1,),
+            dtype=np.float32,
+        )
+        self.observation_space.spaces["inst_block"] = gym.spaces.Box(
+            low=0,
+            high=2,
+            shape=(1,),
+            dtype=np.int32,
+        )
         ###########
         
         # if self.depth_sensor:
@@ -504,6 +528,16 @@ class DmlabGymEnv_custom(gym.Env):
                 reward_input,
                 dtype=np.float32,
             ).reshape(1) 
+
+        # Required for HL-RNN to know when a trial has ended and what the outcome was from obs dictionary:
+        outcome_event = env_obs_dict.pop("outcome_event", [0.0])
+        env_obs_dict["outcome_event"] = np.asarray(outcome_event, dtype=np.float32).reshape(1)
+
+        prev_trial_reward = env_obs_dict.pop("prev_trial_reward", [0.0])
+        env_obs_dict["prev_trial_reward"] = np.asarray(prev_trial_reward, dtype=np.float32).reshape(1)
+
+        inst_block = env_obs_dict.pop("inst_block", [0])
+        env_obs_dict["inst_block"] = np.asarray(inst_block, dtype=np.int32).reshape(1)
         ##########################################
 
         if instr is not None:
@@ -532,7 +566,7 @@ class DmlabGymEnv_custom(gym.Env):
         self._total_lo_miss = float(env_obs_dict.pop('lowrew_miss_total', [0.0])[0])
 
         self._flexibility = float(env_obs_dict.pop('flexibility', [0.0])[0])
-        self._inst_block = int(env_obs_dict.pop('inst_block', [0])[0])
+        #self._inst_block = int(env_obs_dict.pop('inst_block', [0])[0])
         # -----------------------------------------
 
       # if self.with_pos_obs:
@@ -606,11 +640,16 @@ class DmlabGymEnv_custom(gym.Env):
             info["episode_extra_stats"]["custom/lowrew_hit"] = self._total_lo_hit
             info["episode_extra_stats"]["custom/lowrew_miss"] = self._total_lo_miss
 
+            total_correct = self._total_hi_hit + self._total_lo_hit
+            total_incorrect = self._total_hi_miss + self._total_lo_miss
+            total_trials = total_correct + total_incorrect
+            info["episode_extra_stats"]["custom/arm_obedience"] = total_correct / total_trials if total_trials > 0 else 0.0
+
             info["episode_extra_stats"]["custom/flexibility"] = self._flexibility
 
             info["episode_extra_stats"]["custom/instr_switch"] = self._last_instruction 
 
-            info["episode_extra_stats"]["custom/inst_block"] = self._inst_block
+            #info["episode_extra_stats"]["custom/inst_block"] = self._inst_block
             
             # Save raw step histories locally
             info["hi_hit_history"] = self.hi_hit_history.copy()

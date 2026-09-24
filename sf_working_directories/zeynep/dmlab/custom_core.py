@@ -13,6 +13,7 @@ from sf_working_directories.zeynep.dmlab.custom_weights_DGFeedback import genera
 #from sf_working_directories.zeynep.dmlab.custom_rnn_DGFeedback import CustomRNN
 from sf_working_directories.zeynep.dmlab.custom_rnn_boundedfeedback import CustomRNN
 from sf_working_directories.zeynep.dmlab.custom_contextRNN import ContextRNN # to wrap any core with context inference module
+from sf_working_directories.zeynep.dmlab.custom_highlevelRNN import HighLevelContextRNN_Stage1, HighLevelContextRNN_QLearning
 
 class FixedRNNSequenceCore(ModelCore):
     def __init__(self, cfg, input_size):
@@ -580,6 +581,148 @@ class ContextRNNWrapperCore(ModelCore):
             return out_total_seq, new_rnn_states
 
 
+class HighLevelRNNWrapperCore(ModelCore):
+    """
+    Stage 1: High-Level RNN Wrapper.
+    """
+    def __init__(self, cfg, input_size):
+        super().__init__(cfg)
+        self.cfg = cfg
+        self.K = getattr(cfg, "hl_K", 4)
+        self.d_H = getattr(cfg, "hl_d_H", 16)
+        self.oracle = getattr(cfg,"oracle_context", False)
+        
+        # 1. Instantiate the base core
+        # Subtract 2 because outcome_event and prev_trial_reward don't go to base
+        base_input_size = input_size - 2 
+        if self.oracle:
+            base_input_size -= 1  # Subtract 1 more for inst_block if oracle is used
+            
+        self.base_core = SimpleSequenceWithBypassCore(cfg, input_size=base_input_size)
+        
+        # The SimpleSequenceWithBypassCore state size equals its total_output_size
+        self.base_state_size = self.base_core.total_output_size
+        
+        # 2. Instantiate your custom High-Level RNN
+        self.high_level_rnn = HighLevelContextRNN_Stage1(K=self.K, d_H=self.d_H)
+
+        # 3. Sizes
+        self.total_state_size = self.base_state_size + self.d_H + self.K
+        self.total_output_size = self.base_core.total_output_size + self.K
+
+    def get_core_state_size(self):
+        return self.total_state_size
+        
+    def get_out_size(self):
+        return self.total_output_size
+
+    def forward(self, head_output, rnn_states):
+        # --- Safely handle PackedSequences ---
+        is_packed = isinstance(head_output, PackedSequence)
+        if is_packed:
+            head_output, lengths = pad_packed_sequence(head_output)
+
+        is_bptt = head_output.dim() == 3
+
+        # Extract states
+        base_states = rnn_states[:, :self.base_state_size]
+        h_high_prev = rnn_states[:, self.base_state_size : self.base_state_size + self.d_H]
+        z_prev = rnn_states[:, self.base_state_size + self.d_H :]
+
+        if not is_bptt:
+            # === INFERENCE PASS ===
+            prev_trial_reward = head_output[:, -1]
+            outcome_mask = head_output[:, -2].bool()
+
+            if self.oracle:
+                inst_block = head_output[:, -3].long()  # Assuming the block index is the third-to-last feature
+                # Strip the variables off so the base core doesn't see them
+                base_head_output = head_output[:, :-3]
+                # High-Level Step
+                h_high_new, z_new = self.high_level_rnn(
+                    outcome_mask, 
+                    prev_trial_reward, 
+                    h_high_prev, 
+                    z_prev,
+                    inst_block
+                    )
+            else:
+                inst_block = None
+                base_head_output = head_output[:, :-2]
+
+                # High-Level Step
+                h_high_new, z_new = self.high_level_rnn(
+                    outcome_mask, 
+                    prev_trial_reward, 
+                    h_high_prev, 
+                    z_prev
+                )            
+
+            # Base Core Step
+            base_core_out, base_states_new = self.base_core(base_head_output, base_states)
+
+            # Pack Outputs - concatenate z with base_core's output to go to decoder
+            out_total = torch.cat([base_core_out, z_new], dim=-1)
+            new_rnn_states = torch.cat([base_states_new, h_high_new, z_new], dim=-1)
+
+            # Pack it back if it was packed
+            if is_packed:
+                out_total = nn.utils.rnn.pack_padded_sequence(out_total, lengths, enforce_sorted=False)
+
+            return out_total, new_rnn_states
+
+        else:
+            # === BPTT PASS ===
+            T, B = head_output.shape[:2]
+            
+            h_high_t = h_high_prev
+            z_t = z_prev
+            base_states_t = base_states
+
+            out_total_list = []
+            
+            for t in range(T):
+                prev_trial_reward_t = head_output[t, :, -1]
+                outcome_mask_t = head_output[t, :, -2].bool()
+
+                if self.oracle:
+                    inst_block_t = head_output[t, :, -3].long()
+                    base_head_output_t = head_output[t, :, :-3]
+                    # High-Level Step
+                    h_high_t, z_t = self.high_level_rnn(
+                        outcome_mask_t, 
+                        prev_trial_reward_t, 
+                        h_high_t, 
+                        z_t,
+                        inst_block_t
+                    )
+
+                else:
+                    base_head_output_t = head_output[t, :, :-2]
+                    # High-Level Step
+                    h_high_t, z_t = self.high_level_rnn(
+                        outcome_mask_t, 
+                        prev_trial_reward_t, 
+                        h_high_t, 
+                        z_t
+                    )
+
+                # Base Core Step
+                base_core_out_t, base_states_t = self.base_core(base_head_output_t, base_states_t)
+
+                # Output - concatenate z_t with base_core_out_t
+                out_total_t = torch.cat([base_core_out_t, z_t], dim=-1)
+                out_total_list.append(out_total_t)
+
+            out_total_seq = torch.stack(out_total_list, dim=0)
+            new_rnn_states = torch.cat([base_states_t, h_high_t, z_t], dim=-1)
+
+            # Pack it back if it was packed
+            if is_packed:
+                out_total_seq = nn.utils.rnn.pack_padded_sequence(out_total_seq, lengths, enforce_sorted=False)
+
+            return out_total_seq, new_rnn_states
+    
 class SimpleSequenceCore(ModelCore):
     def __init__(self, cfg, input_size):
         """
@@ -1707,6 +1850,8 @@ def make_hipposlam_core(cfg: Config, core_input_size: int) -> ModelCore:
             core = FixedRNNWithBypassCoreDGFeedbackLORA(cfg, core_input_size)
         elif cfg.core_name == "BypassSS_ContextRNN":
             core = ContextRNNWrapperCore(cfg, core_input_size)
+        elif cfg.core_name == "BypassSS_HighLevelRNN":
+            core = HighLevelRNNWrapperCore(cfg, core_input_size)
 
     else:
         core = ModelCoreIdentity(cfg, core_input_size)

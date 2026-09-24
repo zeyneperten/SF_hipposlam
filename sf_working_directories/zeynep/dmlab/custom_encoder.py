@@ -685,6 +685,11 @@ class HipposlamEncoder(Encoder):
 
         self.dg_only_no_bypass_instr = self.oracle_context and (self.Decoder_context_mod == "None")
 
+        self.high_level = False
+        if "HighLevel" in cfg.core_name:
+            self.high_level = True
+            self.reward_input = False
+
         if hasattr(cfg, "depth_sensor"):
            log.info(f"denpth_sensor {cfg.depth_sensor}")
            if self.depth_sensor:
@@ -711,6 +716,12 @@ class HipposlamEncoder(Encoder):
         # Number of scalar features for reward input (e.g. 1 float)
         if self.reward_input:
             tmp_out_size += 1 
+
+        if self.high_level:
+            tmp_out_size += 2 # to pass outcome_event and prev_reward to the high-level core
+            if self.oracle_context: # pass inst_block to the high-level core
+                tmp_out_size += 1
+            log.info(f"HighLevel core: dim {tmp_out_size} (including outcome_event and prev_reward)")
         ##########################################################################################
 
         self.encoder_out_size = tmp_out_size
@@ -884,6 +895,16 @@ class HipposlamEncoder(Encoder):
         ### ADDED REWARD SO THAT IT DOESN'T GO THROUGH DG PROJECTION, BUT IS CONCATENATED TO THE OUTPUT OF THE ENCODER ###
         if self.reward_input:
             tmp_out = torch.cat((tmp_out, reward_feat), dim=1)
+
+        if self.high_level:
+            outcome_event = obs_dict.get("outcome_event").to(device=tmp_out.device, dtype=tmp_out.dtype)
+            prev_trial_reward = obs_dict.get("prev_trial_reward").to(device=tmp_out.device, dtype=tmp_out.dtype)
+            if self.oracle_context:
+                inst_block = obs_dict.get("inst_block").to(device=tmp_out.device, dtype=tmp_out.dtype)
+                tmp_out = torch.cat((tmp_out, inst_block, outcome_event, prev_trial_reward), dim=1)
+            else:
+                tmp_out = torch.cat((tmp_out, outcome_event, prev_trial_reward), dim=1)
+
         return tmp_out
 
     def get_out_size(self) -> int:
