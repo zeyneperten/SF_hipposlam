@@ -568,7 +568,12 @@ class BaseLearner(Configurable):
 
         # calculate policy head outside of recurrent loop
         with self.timing.add_time("forward_head"):
-            head_outputs = self.actor_critic.forward_head(mb.normalized_obs)
+            if getattr(self.cfg, "hl_dg_from_prev_z", False):
+                # Actor states were saved before each action. Their final K entries
+                # are the mode that conditioned the actor's previous-frame DG.
+                head_outputs = self.actor_critic.forward_head(mb.normalized_obs, mb.rnn_states)
+            else:
+                head_outputs = self.actor_critic.forward_head(mb.normalized_obs)
             if getattr(self.cfg, "core_name", None) == "BypassSS_HighLevelRNN":
                 # The environment reward belongs to the option selected by
                 # the actor. The trial history spans rollout boundaries and is

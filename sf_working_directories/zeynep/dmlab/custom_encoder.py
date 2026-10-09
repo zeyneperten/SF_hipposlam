@@ -582,12 +582,16 @@ class HipposlamEncoder(Encoder):
         self.DG_context_mod = getattr(cfg, "DG_context_mod", "None") ## ADDED 
         self.Decoder_context_mod = getattr(cfg, "Decoder_context_mod", "None") ## ADDED 
         self.oracle_context = getattr(cfg, "oracle_context", False)
+        self.hl_dg_from_prev_z = getattr(cfg, "hl_dg_from_prev_z", False)
+        if self.hl_dg_from_prev_z and (self.oracle_context or cfg.hl_K != 2):
+            raise ValueError("hl_dg_from_prev_z requires oracle_context=False and hl_K=2")
+        has_dg_context = self.oracle_context or self.hl_dg_from_prev_z
         
         self.reward_input = getattr(cfg, "reward_input", False) ## ADDED 
 
         self.with_number_instruction = cfg.with_number_instruction
         self.number_instruction_coef = getattr(cfg, "number_instruction_coef", 1)
-        if self.oracle_context and self.with_number_instruction:
+        if has_dg_context and self.with_number_instruction:
             # repurposed it to encode map number
             self.instructions_lstm_units = 2
         elif self.oracle_context:
@@ -618,10 +622,10 @@ class HipposlamEncoder(Encoder):
         #self.encoder_out_size += self.instructions_lstm_units 
 
         # Instructions enter DG only in concat mode. Instead of doing substraction like previously, we will add them to the encoder output size only in concat mode. 31.08.26
-        if self.oracle_context and self.DG_context_mod == "concat":
+        if has_dg_context and self.DG_context_mod == "concat":
             self.encoder_out_size += self.instructions_lstm_units
 
-        needs_context = self.oracle_context and (self.DG_context_mod == "multiply" or self.DG_context_mod == "sigmoid" or self.Decoder_context_mod != "None")
+        needs_context = has_dg_context and (self.DG_context_mod == "multiply" or self.DG_context_mod == "sigmoid" or self.Decoder_context_mod != "None")
         if needs_context:
             self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
         ###################################################################################################
@@ -683,7 +687,7 @@ class HipposlamEncoder(Encoder):
         bypass_features = 0
         bypass_features = self.encoder_out_size
 
-        self.dg_only_no_bypass_instr = self.oracle_context and (self.Decoder_context_mod == "None")
+        self.dg_only_no_bypass_instr = has_dg_context and (self.Decoder_context_mod == "None")
 
         self.high_level = False
         if "HighLevel" in cfg.core_name:
@@ -691,7 +695,8 @@ class HipposlamEncoder(Encoder):
             self.high_level = True
             self.reward_input = False
 
-            self.dg_only_no_bypass_instr = True
+            if not self.hl_dg_from_prev_z:
+                self.dg_only_no_bypass_instr = True
 
         if hasattr(cfg, "depth_sensor"):
            log.info(f"denpth_sensor {cfg.depth_sensor}")
@@ -753,7 +758,7 @@ class HipposlamEncoder(Encoder):
             return torch.int64
         return torch.float32
 
-    def forward(self, obs_dict):
+    def forward(self, obs_dict, previous_mode=None):
         # obs_cnn = obs_dict["obs"].copy()
         if self.depth_sensor:
             obs_cnn = obs_dict["obs"][:, :3, :, :]
@@ -771,11 +776,15 @@ class HipposlamEncoder(Encoder):
             ).reshape(x.shape[0], 1)
         ###########
 
-        if self.oracle_context and self.with_number_instruction:
+        if self.hl_dg_from_prev_z:
+            if previous_mode is None or previous_mode.shape != (x.shape[0], 2):
+                raise ValueError("DG transfer requires a two-column prior mode for every observation")
+            last_outputs = previous_mode.to(device=x.device, dtype=x.dtype) * self.number_instruction_coef
+        elif self.oracle_context and self.with_number_instruction:
             instr = obs_dict[DMLAB_INSTRUCTIONS]
 
             last_outputs = (
-                torch.nn.functional.one_hot(torch.clamp(instr.squeeze(1) - 1, min=0).long(), num_classes=2) * self.number_instruction_coef 
+                torch.nn.functional.one_hot(torch.clamp(instr.squeeze(1) - 1, min=0).long(), num_classes=2).float() * self.number_instruction_coef
             )
             #log.info(last_outputs) # this should be a tensor of shape [batch_size, 3] with one-hot encoding of the instruction number
             #log.info(f"Batch Instructions: {current_instructions} | Encoded Shape: {last_outputs.shape}")
@@ -808,9 +817,9 @@ class HipposlamEncoder(Encoder):
         if last_outputs is not None:
             last_outputs = last_outputs.to(x.device)  # for some reason this is very slow
 
-        DG_mod = self.DG_context_mod if self.oracle_context else "None"
-        Dec_mod = self.Decoder_context_mod if self.oracle_context else "None"
-        if getattr(self, 'high_level', False):
+        DG_mod = self.DG_context_mod if (self.oracle_context or self.hl_dg_from_prev_z) else "None"
+        Dec_mod = self.Decoder_context_mod if (self.oracle_context or self.hl_dg_from_prev_z) else "None"
+        if getattr(self, 'high_level', False) and not self.hl_dg_from_prev_z:
             Dec_mod = "None"
 
         depth_out = None
@@ -1191,5 +1200,4 @@ def make_hipposlam_encoder(cfg: Config, obs_space: ObsSpace) -> Encoder:
         # #    f"bypass enabled: {self.bypass}, "
         # #    f"depth_sensor: {self.depth_sensor}"
         # #)
-        # #return tmp_out      
-        
+        # #return tmp_out

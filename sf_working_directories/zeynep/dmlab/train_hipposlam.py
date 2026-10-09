@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from multiprocessing.context import BaseContext
 from typing import Optional
 
@@ -17,6 +18,8 @@ from sf_working_directories.zeynep.dmlab.custom_core import make_hipposlam_core
 from sf_working_directories.zeynep.dmlab.custom_decoder import make_hipposlam_decoder
 from sf_working_directories.zeynep.dmlab.custom_encoder import make_hipposlam_encoder
 from sf_working_directories.zeynep.dmlab.custom_params import add_hipposlam_env_args, hipposlam_override_defaults
+from sf_working_directories.zeynep.dmlab.oracle_transfer import prepare_oracle_transfer
+from sf_working_directories.zeynep.dmlab.oracle_transfer_learner import make_oracle_transfer_learner
 from sf_working_directories.zeynep.dmlab.dmlab_env import (
     DMLAB_ENVS,
     dmlab_extra_episodic_stats_processing,
@@ -55,6 +58,9 @@ def register_dmlab_components(level_caches: Optional[DmlabLevelCaches] = None, c
 
     if cfg.core_name == "BypassSS_HighLevelRNN":
         global_model_factory().register_actor_critic_factory(make_hipposlam_actor_critic)
+
+    if getattr(cfg, "hl_dg_from_prev_z", False):
+        global_learner_factory().register_learner_factory(make_oracle_transfer_learner)
 
     # global_learner_factory().register_learner_factory(make_hipposlam_learner)
 
@@ -101,6 +107,15 @@ def parse_dmlab_args(argv=None, evaluation=False):
     add_dmlab_env_args(parser)
     hipposlam_override_defaults(parser)
     cfg = parse_full_cfg(parser, argv)
+    if getattr(cfg, "oracle_init_checkpoint", None):
+        # A target run's own checkpoint and saved configuration take precedence.
+        # In particular, resuming must not require the original oracle file.
+        target_dir = Path(experiment_dir(cfg, mkdir=False))
+        has_target_checkpoint = cfg.restart_behavior == "resume" and any(
+            target_dir.glob("checkpoint_p*/*.pth")
+        )
+        if not has_target_checkpoint:
+            prepare_oracle_transfer(cfg)
     #maybe_overwrite_rnn_size(cfg) 
     return cfg
 

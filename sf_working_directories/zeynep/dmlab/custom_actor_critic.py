@@ -100,6 +100,29 @@ def make_hipposlam_actor_critic(cfg, obs_space, action_space) -> ActorCritic:
     # Use Sample Factory's default creation logic
     actor_critic = default_make_actor_critic_func(cfg, obs_space, action_space)
 
+    if getattr(cfg, "oracle_init_checkpoint", None) and getattr(cfg, "oracle_freeze_controller", True):
+        frozen = (actor_critic.obs_normalizer, actor_critic.encoder,
+                  actor_critic.core.base_core, actor_critic.decoder,
+                  actor_critic.action_parameterization)
+        for module in frozen:
+            for parameter in module.parameters():
+                parameter.requires_grad_(False)
+
+        # requires_grad alone does not stop BatchNorm running-stat updates.
+        original_train = actor_critic.train
+
+        def train_with_frozen_controller(mode=True):
+            original_train(mode)
+            for module in frozen:
+                module.eval()
+            return actor_critic
+
+        actor_critic.train = train_with_frozen_controller
+        actor_critic.train(actor_critic.training)
+        log.warning("Oracle controller frozen: observation normalization, encoder/DG, "
+                    "base core, decoder, action head; "
+                    "critic and high-level learner remain trainable")
+
     if getattr(cfg, "hl_train_fix_base", False):
         log.warning("Fix encoder, base core, decoder. Only train high-level RNN and its loss.")
 

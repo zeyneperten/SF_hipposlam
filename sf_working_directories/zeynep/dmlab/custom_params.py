@@ -74,6 +74,12 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
     p.add_argument("--Decoder_context_mod", default="None", type=str, choices=["None", "enter", "FiLM", "additive"], help="Whether to use context modulation in the decoder layer.")
     p.add_argument("--reward_input", default=False, type=str2bool, help="Whether to use the reward input as an additional input to the encoder.")
     p.add_argument("--oracle_context", default=False, type=str2bool, help="Whether to enable instruction-driven oracle context in the encoder.")
+    p.add_argument("--oracle_init_checkpoint", default=None, type=str,
+                   help="Initialize a new two-mode high-level run from this oracle .pth checkpoint.")
+    p.add_argument("--oracle_freeze_controller", default=True, type=str2bool,
+                   help="Keep inherited vision, DG, decoder, and action head fixed (critic remains trainable).")
+    p.add_argument("--hl_dg_from_prev_z", default=False, type=str2bool,
+                   help="Use the preceding latched high-level mode as the encoder's DG context.")
     ##       Context Inference Module        ## 
     p.add_argument("--context_hidden_size", default=6, type=int, help="Hidden size of the context RNN.") 
     p.add_argument("--decoder_context_dim", default=6, type=int, help="Dimension of the context vector used in the decoder.") 
