@@ -37,18 +37,9 @@ def HighLevel_LossWrapper(actor_critic: ActorCritic) -> ActorCritic:
     
     def custom_forward(*args, **kwargs):
         core = getattr(actor_critic, 'core', getattr(actor_critic, 'actor_core', None))
-        values_only = kwargs.get('values_only', args[2] if len(args) > 2 else False)
-        selector = getattr(core, 'hl_learner', None)
-        # Bootstrap values should be reproducible. Actor action collection
-        # still samples unless hl_deterministic was explicitly configured.
-        previous_deterministic = selector.deterministic if selector is not None else None # PPO guesses the value of next state (bootstrapping). Force deterministic only during value-guessing step to keep math clean.
-        if selector is not None and values_only:
-            selector.deterministic = True # When passed the 64 rollout frames, make a guess and bypass the sampling of high-level mode. This is only for bootstrapping the value function, not for training the high-level RNN.
-        try:
-            result_dict = original_forward(*args, **kwargs)
-        finally:
-            if selector is not None:
-                selector.deterministic = previous_deterministic 
+        # Value bootstrap must follow the same mode policy as acting. A greedy
+        # mode here biases the target when the actor samples at trial boundaries.
+        result_dict = original_forward(*args, **kwargs)
 
         if getattr(actor_critic.cfg, 'core_name', None) == 'BypassSS_HighLevelRNN':
             # This is the mode actually used by the actor's decoder at this step.

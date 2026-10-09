@@ -61,7 +61,7 @@ truncated-backpropagation window. No second PPO implementation is involved.
 | File | Change |
 | --- | --- |
 | `sample_factory/algo/utils/shared_buffers.py` | Allocate `hl_z` for the high-level core only. |
-| `custom_actor_critic.py` | Save the post-decision mode from `new_rnn_states` as `hl_z` alongside the actor's actions; use a reproducible greedy mode for value-only bootstrap calls. |
+| `custom_actor_critic.py` | Save the post-decision mode from `new_rnn_states` as `hl_z` alongside the actor's actions; preserve the configured mode sampling rule for value-only bootstrap calls. |
 | `sample_factory/algo/learning/learner.py` | Pass recorded `hl_z` and training-only trial records into the packed recurrent learner input. |
 | `custom_core.py` | Carry the bounded trial history, unroll it at outcome events, use recorded modes during replay, reject an incorrect configured state size, and summarize valid outcome count and raw trial reward scale. |
 | `custom_highlevelRNN.py` | Separate reward-state updates from mode sampling; sample or choose greedily using an explicit setting rather than autograd state. |
@@ -79,8 +79,10 @@ the auxiliary loss explicitly from the forward pass instead.
 For this configuration, eight records use $8(16+4+2)=176$ state elements.
 `hl_deterministic=False` is the training default. Set it to `True` only when
 greedy high-level evaluation is intended; actor inference mode alone no longer
-changes exploration. The value-only bootstrap path temporarily chooses greedily
-to avoid adding random sampling noise to the next-value estimate. Other runs
+changes exploration. Value-only bootstrap uses the same mode-sampling rule as
+acting. A greedy bootstrap with a sampling actor would bias the value target
+at trial boundaries; one sampled mode is an unbiased but noisy estimate of
+the mode-averaged next value. Other runs
 using the high-level core must update their
 `rnn_size` to account for `hl_history_len` or the core will raise a size error.
 

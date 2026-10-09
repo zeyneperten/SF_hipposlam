@@ -73,6 +73,30 @@ def test_actor_mode_is_a_recorded_policy_output():
     assert torch.equal(actor.forward()["hl_z"], torch.tensor([[1.0, 0.0]]))
 
 
+def test_value_bootstrap_uses_training_mode_distribution():
+    class DummyActor:
+        def __init__(self):
+            self.cfg = SimpleNamespace(core_name="other")
+            self.core = SimpleNamespace(hl_learner=HighLevelContextRNN_Learner(K=2, d_H=3))
+
+        def forward(self, values_only=False):
+            z, _ = self.core.hl_learner.sample_mode(torch.zeros(1, 2))
+            return {"values": z[:, 1], "new_rnn_states": z}
+
+        def summaries(self):
+            return {}
+
+    actor = HighLevel_LossWrapper(DummyActor())
+    torch.manual_seed(4)
+    with torch.no_grad():
+        bootstrap_values = [actor.forward(values_only=True)["values"].item() for _ in range(100)]
+    assert set(bootstrap_values) == {0.0, 1.0}
+
+    actor.core.hl_learner.deterministic = True
+    with torch.no_grad():
+        assert all(actor.forward(values_only=True)["values"].item() == 0.0 for _ in range(10))
+
+
 def test_trial_history_survives_chunk_boundary_and_trains_rnn_cell():
     core = make_core()
     state = torch.zeros(1, core.get_core_state_size())

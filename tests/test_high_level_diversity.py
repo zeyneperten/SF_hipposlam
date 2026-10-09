@@ -29,6 +29,16 @@ class HighLevelDiversityTests(unittest.TestCase):
         self.assertTrue(torch.equal(predictability_bonus(logits, modes), torch.zeros(4)))
         self.assertTrue(torch.equal(predictability_bonus(logits, torch.zeros(4, dtype=torch.long)), torch.zeros(4)))
 
+    def test_chance_level_guesses_have_no_positive_average_reward(self):
+        modes = torch.tensor([0, 1, 0, 1])
+        guesses = torch.tensor([0, 0, 1, 1])
+        logits = F.one_hot(guesses, num_classes=2).float() * 8.0
+        reward = predictability_bonus(logits, modes)
+        self.assertEqual((guesses == modes).float().mean().item(), 0.5)
+        self.assertLessEqual(reward.mean().item(), 0.0)
+        self.assertGreater(reward.mean().item(), -0.01)
+        self.assertTrue(torch.all(reward.abs() <= 1.0))
+
     def test_reward_uses_reached_state_and_previous_action_mode(self):
         # Two trajectories, three actions, and four observations each.
         obs = {

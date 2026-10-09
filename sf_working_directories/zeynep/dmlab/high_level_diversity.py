@@ -50,10 +50,11 @@ class TrialEndModeClassifier(nn.Module):
 
 
 def predictability_bonus(logits: torch.Tensor, modes: torch.Tensor) -> torch.Tensor:
-    """Bounded, nonnegative evidence for the true mode above its batch prior.
+    """Bounded, signed evidence for the true mode above its batch prior.
 
     A classifier that emits the same probabilities for every reached state
-    receives zero bonus, even if one mode is selected much more often.
+    receives zero bonus, even if one mode is selected much more often. Keeping
+    negative evidence prevents chance-level guesses from earning reward.
     """
     if logits.size(0) < 2 or modes.unique().numel() < 2: # First check if at least 2 modes are used in this batch, if lazy give 0 bonus. 
         return logits.new_zeros(modes.shape)
@@ -61,7 +62,7 @@ def predictability_bonus(logits: torch.Tensor, modes: torch.Tensor) -> torch.Ten
     true_probability = probabilities.gather(1, modes[:, None]).squeeze(1) # Classifier's confidence in the true mode for each example in the batch.
     marginal_probability = probabilities.mean(dim=0)[modes] # How often Classifier guesses the mode overall. If blindly guess the same mode -> 100% -> image give no clues
     evidence = true_probability.clamp_min(1e-8).log() - marginal_probability.clamp_min(1e-8).log() # "Information gain" If the image actually helped to better guess than average
-    return (evidence / torch.log(logits.new_tensor(logits.size(-1)))).clamp(0.0, 1.0) # Normalize so 0 -> classifier is clueless 1 -> classifier is very confident and correct.
+    return (evidence / torch.log(logits.new_tensor(logits.size(-1)))).clamp(-1.0, 1.0)
 
 
 @torch.no_grad()

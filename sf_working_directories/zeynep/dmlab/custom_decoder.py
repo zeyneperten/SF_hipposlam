@@ -162,10 +162,9 @@ class MlpDecoderAdditiveJit(Decoder):
 
 def make_hipposlam_decoder(cfg: Config, core_input_size: int) -> Decoder:
     if cfg.core_name == "BypassSS_HighLevelRNN":
-        if cfg.oracle_context:
-            context_size = 2 # for 2D oracle context
-        else:
-            context_size = 4 # for 4D learned context 
+        # The high-level core appends hl_K one-hot mode values in both oracle
+        # and learned runs. Split exactly those values from the base output.
+        context_size = cfg.hl_K
     else:
         context_size = 2# for 2D oracle context 
     input_size = core_input_size - context_size # send depth features to MLP like original did. Context instead does additive modulation

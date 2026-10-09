@@ -3,8 +3,9 @@
 This note explains the auxiliary reward added for Zeynep's Y-maze high-level
 RNN experiment. Its purpose is to encourage the low-level controller to reach
 different trial-end states under different high-level modes $z$. The feature is
-off by default. `exp_ymaze_HLRNN.py` opts in with a maximum bonus of $0.01$ per
-completed trial.
+off by default. The current `exp_ymaze_HLRNN.py` launch also leaves it off;
+set `--hl_diversity_reward_coef=0.01` to test an auxiliary reward whose
+magnitude is at most $0.01$ per completed trial.
 
 ## What happens at a trial boundary
 
@@ -33,11 +34,14 @@ $$
 r_t^{\mathrm{div}} = \beta\,\mathbf{1}[\mathrm{outcome}_{t+1}]
 \operatorname{clip}\!\left(
 \frac{\log q_\phi(z_t\mid s_{t+1})-\log \bar q_\phi(z_t)}{\log K},
-0,1\right),
+-1,1\right),
 $$
 
-with $\beta=0.01$ and $K=\texttt{hl_K}=4$ in this experiment. It is
-nonnegative and at most $0.01$. The batch marginal removes the easy reward
+with $\beta=0.01$ and $K=\texttt{hl_K}=4$ in the opt-in configuration. The
+term lies between $-0.01$ and $0.01$: incorrect predictions can give a small
+penalty. Keeping signed evidence matters because clipping each negative value
+to zero paid a positive average bonus even when the classifier guessed at
+chance. The batch marginal removes the easy reward
 for predicting the most common mode from class frequency alone: a classifier
 whose output is identical for every reached state gives zero bonus. A batch
 with fewer than two represented modes also gives zero bonus. The classifier
@@ -62,7 +66,7 @@ the trial-end observations and pre-event modes are available.
 | `custom_actor_critic.py` | Attach the classifier only when the bonus coefficient is positive. |
 | `custom_params.py` | Add the three `hl_diversity_*` options; default bonus coefficient is zero. |
 | `sample_factory/algo/learning/learner.py` | Add the bonus before GAE and the classifier loss to the existing optimization step, guarded by the coefficient. The rollout reward tensor is cloned so shared experience is untouched. |
-| `experiments/exp_ymaze_HLRNN.py` | Set `--hl_diversity_reward_coef=0.01` for this experiment only. |
+| `experiments/exp_ymaze_HLRNN.py` | Contains an example `--hl_diversity_reward_coef=0.01` switch, currently commented out. |
 | `tests/test_high_level_diversity.py` | Check reward timing, boundary handling, masking, prior-only predictions, and classifier gradients. |
 
 The learner logs `hl/diversity_classifier_loss`,
@@ -100,3 +104,12 @@ controller took a distinct route along the entire trial. Compare outcome
 images, mode frequencies, reached arms, and the environmental task reward in
 the first real run. If all modes collapse to one, the zero bonus is expected;
 mode exploration must still come from the high-level sampler.
+
+## Regression correction (2026-10-09)
+
+The original positive-only clipping gave almost half the maximum bonus in a
+10,000-sample probe where mode guesses were independent of the true mode and
+accuracy was $49.5\%$. Keeping the signed term made that chance-level signal
+average to approximately zero. The new unit check covers an exactly balanced
+chance-level example. This does not replace an end-to-end check of actual
+trial-end images.
