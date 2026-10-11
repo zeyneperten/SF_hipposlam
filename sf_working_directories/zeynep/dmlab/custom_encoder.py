@@ -876,7 +876,9 @@ class HipposlamEncoder(Encoder):
                 embedded_mode = torch.sigmoid(self.hl_mode_embed_layer(hl_z))
                 tmp_out = self.DG_projection(x) * embedded_mode
             elif self.hl_DG_mod == "concat":
-                x_cat = torch.cat((x, hl_z), dim=1)
+                # x_cat = torch.cat((x, hl_z), dim=1) # PREVIOUS
+                ## 11.10.2026 ADDED: scale one-hot mode by number_instruction_coef for concat ##
+                x_cat = torch.cat((x, hl_z * self.number_instruction_coef), dim=1)
                 tmp_out = self.DG_projection(x_cat)
             else:
                 tmp_out = self.DG_projection(x)

@@ -113,7 +113,8 @@ else:
                     embedded_mode = torch.sigmoid(self.hl_mode_embed_layer(hl_z))
                     tmp_out = self.DG_projection(x) * embedded_mode
                 elif self.hl_DG_mod == "concat":
-                    x_cat = torch.cat((x, hl_z), dim=1)
+                    coef = getattr(self, "number_instruction_coef", 1)
+                    x_cat = torch.cat((x, hl_z * coef), dim=1)
                     tmp_out = self.DG_projection(x_cat)
                 else:
                     tmp_out = self.DG_projection(x)
