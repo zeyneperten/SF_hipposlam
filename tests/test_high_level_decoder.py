@@ -25,7 +25,7 @@ def test_high_level_decoder_uses_all_mode_dimensions_in_oracle_runs():
             assert decoder.context_dim == 4
             mode = F.one_hot(torch.tensor([0, 1]), num_classes=4).float()
             core_output = torch.cat((torch.zeros(2, 8), mode), dim=-1)
-            assert torch.equal(core_output[:, decoder.processed_core_size:], mode)
+            assert torch.equal(core_output[:, decoder.processed_core_size :], mode)
 
 
 def test_plain_decoder_keeps_mode_in_its_mlp_input():

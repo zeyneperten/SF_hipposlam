@@ -68,57 +68,145 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         help="when loading an encoder, fix its weights at initialization",
     )
 
-    ##### ADDED ##### 
+    ##### ADDED #####
     ##      Oracle context modulation parameters (DG & Decoder)      ##
-    p.add_argument("--DG_context_mod", default="None", type=str, choices=["None", "concat", "multiply", "sigmoid"], help="Whether to use context modulation in the DG layer.")
-    p.add_argument("--Decoder_context_mod", default="None", type=str, choices=["None", "concat", "FiLM", "additive"], help="Whether to use context modulation in the decoder layer.")
-    p.add_argument("--reward_input", default=False, type=str2bool, help="Whether to use the reward input as an additional input to the encoder.")
-    p.add_argument("--oracle_context", default=False, type=str2bool, help="Whether to enable instruction-driven oracle context in the encoder.")
-    p.add_argument("--oracle_init_checkpoint", default=None, type=str,
-                   help="Initialize a new two-mode high-level run from this oracle .pth checkpoint.")
-    p.add_argument("--oracle_freeze_controller", default=True, type=str2bool,
-                   help="Keep inherited vision, DG, decoder, and action head fixed (critic remains trainable).")
-    p.add_argument("--hl_dg_from_prev_z", default=False, type=str2bool,
-                   help="Use the preceding latched high-level mode as the encoder's DG context.")
-    ##       Context Inference Module        ## 
-    p.add_argument("--context_hidden_size", default=6, type=int, help="Hidden size of the context RNN.") 
-    p.add_argument("--decoder_context_dim", default=6, type=int, help="Dimension of the context vector used in the decoder.") 
+    p.add_argument(
+        "--DG_context_mod",
+        default="None",
+        type=str,
+        choices=["None", "concat", "multiply", "sigmoid"],
+        help="Whether to use context modulation in the DG layer.",
+    )
+    p.add_argument(
+        "--Decoder_context_mod",
+        default="None",
+        type=str,
+        choices=["None", "enter", "FiLM", "additive"],
+        help="Whether to use context modulation in the decoder layer.",
+    )
+    p.add_argument(
+        "--reward_input",
+        default=False,
+        type=str2bool,
+        help="Whether to use the reward input as an additional input to the encoder.",
+    )
+    p.add_argument(
+        "--oracle_context",
+        default=False,
+        type=str2bool,
+        help="Whether to enable instruction-driven oracle context in the encoder.",
+    )
+    p.add_argument(
+        "--oracle_init_checkpoint",
+        default=None,
+        type=str,
+        help="Initialize a new two-mode high-level run from this oracle .pth checkpoint.",
+    )
+    p.add_argument(
+        "--oracle_freeze_controller",
+        default=True,
+        type=str2bool,
+        help="Keep inherited vision, DG, decoder, and action head fixed (critic remains trainable).",
+    )
+    p.add_argument(
+        "--hl_dg_from_prev_z",
+        default=False,
+        type=str2bool,
+        help="Use the preceding latched high-level mode as the encoder's DG context.",
+    )
+    ##       Context Inference Module        ##
+    p.add_argument("--context_hidden_size", default=6, type=int, help="Hidden size of the context RNN.")
+    p.add_argument(
+        "--decoder_context_dim", default=6, type=int, help="Dimension of the context vector used in the decoder."
+    )
     p.add_argument("--dg_strength", default=0.1, type=float, help="Strength of the context modulation in the DG layer.")
     p.add_argument("--context_decay", default=0.95, type=float, help="Decay factor for the context RNN's value state.")
-    p.add_argument("--learn_decay", default=True, type=str2bool, help="Whether to learn the decay factor for the context RNN's value state via backpropagation.")
+    p.add_argument(
+        "--learn_decay",
+        default=True,
+        type=str2bool,
+        help="Whether to learn the decay factor for the context RNN's value state via backpropagation.",
+    )
     ##      High Level RNN parameters      ##
     p.add_argument("--hl_K", default=4, type=int, help="Number of modes for the high-level RNN.")
     p.add_argument("--hl_d_H", default=16, type=int, help="Dimension of the high-level RNN's hidden state.")
-    p.add_argument("--hl_tau", default=1.0, type=float,
-                   help="Temperature for sampling high-level modes from Q scores; must be positive.")
-    p.add_argument("--hl_history_len", default=8, type=int,
-                   help="Completed trials retained only for high-level BPTT across frame rollouts.")
-    p.add_argument("--hl_is_policy", default=False, type=str2bool, help="Whether the high-level RNN uses policy logits instead of Q-values.")
-    p.add_argument("--hl_deterministic", default=False, type=str2bool,
-                   help="Use greedy high-level choices; keep False for exploratory training rollouts.")
-    p.add_argument("--hl_diversity_reward_coef", default=0.0, type=float,
-                   help="Maximum trial-end mode predictability bonus; zero disables the classifier entirely.")
-    p.add_argument("--hl_diversity_classifier_loss_coef", default=0.1, type=float,
-                   help="Weight of the trial-end mode classifier loss when the diversity reward is enabled.")
-    p.add_argument("--hl_diversity_include_chosen_arm", default=False, type=str2bool,
-                   help="Also classify the reached arm when the trial-end visual observation is ambiguous.")
-    p.add_argument("--hl_train_fix_base", default=False, type=str2bool,
-                   help="Freeze encoder, base core, and decoder; only train the high-level RNN.")
-    p.add_argument("--context_injection_coef", default=1.0, type=float, help="Coefficient for scaling the context vector before injection into the decoder.")
+    p.add_argument(
+        "--hl_tau",
+        default=1.0,
+        type=float,
+        help="Temperature for sampling high-level modes from Q scores; must be positive.",
+    )
+    p.add_argument(
+        "--hl_history_len",
+        default=8,
+        type=int,
+        help="Completed trials retained only for high-level BPTT across frame rollouts.",
+    )
+    p.add_argument(
+        "--hl_is_policy",
+        default=False,
+        type=str2bool,
+        help="Whether the high-level RNN uses policy logits instead of Q-values.",
+    )
+    p.add_argument(
+        "--hl_deterministic",
+        default=False,
+        type=str2bool,
+        help="Use greedy high-level choices; keep False for exploratory training rollouts.",
+    )
+    p.add_argument(
+        "--hl_diversity_reward_coef",
+        default=0.0,
+        type=float,
+        help="Maximum trial-end mode predictability bonus; zero disables the classifier entirely.",
+    )
+    p.add_argument(
+        "--hl_diversity_classifier_loss_coef",
+        default=0.1,
+        type=float,
+        help="Weight of the trial-end mode classifier loss when the diversity reward is enabled.",
+    )
+    p.add_argument(
+        "--hl_diversity_include_chosen_arm",
+        default=False,
+        type=str2bool,
+        help="Also classify the reached arm when the trial-end visual observation is ambiguous.",
+    )
+    p.add_argument(
+        "--hl_train_fix_base",
+        default=False,
+        type=str2bool,
+        help="Freeze encoder, base core, and decoder; only train the high-level RNN.",
+    )
+    p.add_argument(
+        "--context_injection_coef",
+        default=1.0,
+        type=float,
+        help="Coefficient for scaling the context vector before injection into the decoder.",
+    )
     ## 11.10.2026 ADDED High Level mode → DG modulation ##
-    p.add_argument("--hl_DG_mod", default="None", type=str,
-                   choices=["None", "multiply", "sigmoid", "concat"],
-                   help="How the high-level mode vector modulates DG projection. "
-                        "'multiply' = inside DG between linear and batchnorm; "
-                        "'sigmoid' = post-DG gating via sigmoid(embed(z)); "
-                        "'concat' = concatenate mode vector with visual features before DG projection.")
-    ###################  
+    p.add_argument(
+        "--hl_DG_mod",
+        default="None",
+        type=str,
+        choices=["None", "multiply", "sigmoid", "concat"],
+        help="How the high-level mode vector modulates DG projection. "
+        "'multiply' = inside DG between linear and batchnorm; "
+        "'sigmoid' = post-DG gating via sigmoid(embed(z)); "
+        "'concat' = concatenate mode vector with visual features before DG projection.",
+    )
+    ###################
 
     p.add_argument("--depth_sensor", default=False, type=bool, help="having extra depth sensor")
     p.add_argument(
         "--dmlab_reduced_action_set", default=False, type=bool, help="reduced action set to facilitate learning"
     )
-    p.add_argument("--dmlab_navigation_action_set", default=False, type=str2bool, help="navigation action set to facilitate learning")
+    p.add_argument(
+        "--dmlab_navigation_action_set",
+        default=False,
+        type=str2bool,
+        help="navigation action set to facilitate learning",
+    )
     p.add_argument(
         "--with_number_instruction", default=True, type=str2bool, help="instruction input is number, e.g. 1-3"
     )

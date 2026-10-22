@@ -38,17 +38,17 @@ from sample_factory.utils.typing import Config, StatusCode
 from sample_factory.utils.utils import debug_log_every_n, experiment_dir, log
 
 # from sample_factory.enjoy import enjoy
-from sf_working_directories.jannek.dmlab.enjoy_hipposlam import enjoy
-from sf_working_directories.jannek.dmlab.train_hipposlam import parse_dmlab_args, register_dmlab_components
+from sf_working_directories.zeynep.dmlab.enjoy_hipposlam import enjoy
+from sf_working_directories.zeynep.dmlab.train_hipposlam import parse_dmlab_args, register_dmlab_components
 
 
 def _ensure_parent(path: pathlib.Path):
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-mapname = "openfield_map2_fixed_loc3_noreward"
-expname = "21_InternalRewardSeparateReward2_see_8_e.g.coe_1_e.r.met_punish"
-train_dir = "/work/classic/fr_js1764-sample_factory/workplace_training_directory/train_dir/hipposlam/InternalRewardSeparateReward2_"
+mapname = "ymaze_instr"
+expname = "84_sigmoid_norew_INSTR_see_5555_n.i.coe_200_r.sca_0.1_l.rat_2e-05"
+train_dir = "/work/classic/fr_ze12-data2/ymaze_CTRL/norew_INSTR/new_modulate/sigmoid_run2_grid/train_dir/sigmoid_norew_INSTR/sigmoid_norew_INSTR_"
 
 cli = [
     "--algo",
@@ -57,8 +57,8 @@ cli = [
     mapname,  # pick any DM‑Lab level you have
     "--experiment",
     expname,
-    "--encoder_load_path",
-    "/home/fr/fr_js1764/clean_install_mamba/best_000025288_203030528_reward_94.185.pth",
+    # "--encoder_load_path",
+    # "/home/fr/fr_js1764/clean_install_mamba/best_000025288_203030528_reward_94.185.pth",
     "--train_dir",
     train_dir,  # anything writable
     "--max_num_frames",
@@ -74,13 +74,27 @@ cli = [
     "--with_pos_obs",
     "True",
     "--no_render",  # <-- skip human window; avoid X11 on servers
+    "--oracle_context",
+    "True",
+    "--DG_context_mod",
+    "sigmoid",
+    "--Decoder_context_mod",
+    "enter",
+    "--rnn_size",
+    "1149",
+    "--core_name",
+    "BypassSS",
+    "--reward_scale",
+    "0.1",
+    "--learning_rate",
+    "0.00002",
 ]
 
 cli_dict = {
     "algo": "APPO",
     "env": mapname,
     "experiment": expname,
-    "encoder_load_path": "/home/fr/fr_js1764/clean_install_mamba/best_000025288_203030528_reward_94.185.pth",
+    # "encoder_load_path": "/home/fr/fr_js1764/clean_install_mamba/best_000025288_203030528_reward_94.185.pth",
     "train_dir": train_dir,
     "max_num_frames": "50000",
     "num_envs": "8",
@@ -89,13 +103,21 @@ cli_dict = {
     "no_render": True,
     "use_jit": False,
     "with_pos_obs": True,
+    "oracle_context": True,
+    "DG_context_mod": "sigmoid",
+    "Decoder_context_mod": "enter",
+    "rnn_size": 1149,
+    "core_name": "BypassSS",
+    "reward_scale": 0.1,
+    "learning_rate": 0.00002,
 }
-register_dmlab_components()
-cfg = parse_dmlab_args(evaluation=True, argv=cli)
 
+
+cfg = parse_dmlab_args(evaluation=True, argv=cli)
+cfg.cli_args = cli_dict
+register_dmlab_components(cfg=cfg)
 # tweak whatever you like *after* parsing
 # cfg.with_pos_obs = True
-cfg.cli_args = cli_dict
 # status = enjoy(cfg)
 
 
@@ -139,11 +161,11 @@ actor_critic.model_to_device(device)
 
 #################### register hook
 layers_to_log = [
-    "encoder.basic_encoder.mlp_layers.0",
+    # "encoder.basic_encoder.mlp_layers.0",
     "encoder.DG_projection.linear",
     "core",
-    # "decoder.mlp.0",
-    # "decoder.mlp.2"
+    "decoder.mlp.0",
+    "decoder.mlp.2",
 ]  # <- example; edit to taste
 
 # 2B. activation buffer
@@ -210,6 +232,8 @@ with torch.no_grad():
     while not max_frames_reached(num_frames):
         # log.info(f'Done Frames: {num_frames}')
         # log.debug(f'Generating Actions from Observation')
+
+        # maybe not normalize. check its consıstent wıth the traınıng code
         normalized_obs = prepare_and_normalize_obs(actor_critic, obs)
 
         # if not cfg.no_render:
@@ -245,6 +269,10 @@ with torch.no_grad():
             pos = obs["DEBUG.POS.TRANS"]  # (B,3)
             rot = obs["DEBUG.POS.ROT"]  # (B,3) or (B,4) depending on env
             # log.debug(f'Writing Information')
+
+            for agent_i in range(env.num_agents):
+                current_context = int(obs["INSTR"][agent_i].item()) if "INSTR" in obs else int(obs["INSTR"][0].item())
+
             for agent_i in range(env.num_agents):
                 pose_records.append(
                     {
@@ -257,6 +285,7 @@ with torch.no_grad():
                         "rot_y": float(rot[agent_i, 1]),
                         "rot_z": float(rot[agent_i, 2]),
                         "num_traj": num_traj,
+                        "context": current_context,
                         # keep the whole info dict as a JSON string for convenience
                         "info": json.dumps(infos[agent_i], default=str),
                     }
@@ -351,7 +380,10 @@ env.close()
 
 
 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-telemetry = pathlib.Path(experiment_dir(cfg=cfg)) / "telemetry"
+orig_dir = pathlib.Path(experiment_dir(cfg=cfg))
+# save_dir = pathlib.Path(str(orig_dir).replace("fr_ze12-data", "fr_ze12-data2"))
+telemetry = orig_dir / "telemetry"
+# telemetry = save_dir / "telemetry"
 _ensure_parent(telemetry)
 pose_path = telemetry / f"pose_{ts}.parquet"
 

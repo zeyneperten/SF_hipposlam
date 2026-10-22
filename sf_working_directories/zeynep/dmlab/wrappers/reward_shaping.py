@@ -41,29 +41,28 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
         if info.get("highrew_hit"):
             self.hi_hit_count += 1
             self.hi_hit_history.append(self.episode_length)
-            #log.warning(f"🚨 [FRAME {self.episode_length}] HIGH-REWARD HIT! (Total this episode: {self.hi_hit_count})")
-            
+            # log.warning(f"🚨 [FRAME {self.episode_length}] HIGH-REWARD HIT! (Total this episode: {self.hi_hit_count})")
+
         if info.get("highrew_miss"):
             self.hi_miss_count += 1
             self.hi_miss_history.append(self.episode_length)
-            #log.warning(f"🚨 [FRAME {self.episode_length}] HIGH-REWARD MISS! (Total this episode: {self.hi_miss_count})")
-            
+            # log.warning(f"🚨 [FRAME {self.episode_length}] HIGH-REWARD MISS! (Total this episode: {self.hi_miss_count})")
+
         if info.get("lowrew_hit"):
             self.lo_hit_count += 1
             self.lo_hit_history.append(self.episode_length)
-            #log.warning(f"🚨 [FRAME {self.episode_length}] LOW-REWARD HIT! (Total this episode: {self.lo_hit_count})")
-            
+            # log.warning(f"🚨 [FRAME {self.episode_length}] LOW-REWARD HIT! (Total this episode: {self.lo_hit_count})")
+
         if info.get("lowrew_miss"):
             self.lo_miss_count += 1
             self.lo_miss_history.append(self.episode_length)
-            #log.warning(f"🚨 [FRAME {self.episode_length}] LOW-REWARD MISS! (Total this episode: {self.lo_miss_count})")
+            # log.warning(f"🚨 [FRAME {self.episode_length}] LOW-REWARD MISS! (Total this episode: {self.lo_miss_count})")
         #####################################################
-        
 
         # optimistic asymmetric clipping from IMPALA paper
-        #squeezed = tanh(rew / 5.0)
-        #clipped = 0.3 * squeezed if rew < 0.0 else squeezed
-        #rew = clipped * 5.0
+        # squeezed = tanh(rew / 5.0)
+        # clipped = 0.3 * squeezed if rew < 0.0 else squeezed
+        # rew = clipped * 5.0
 
         if done:
             score = self.raw_episode_return
@@ -72,7 +71,8 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
             existing_extra_stats = info.get("episode_extra_stats", dict())
             #############
 
-            info["episode_extra_stats"] = dict()
+            # info["episode_extra_stats"] = dict() # this used to wipe it out empty
+            info["episode_extra_stats"] = existing_extra_stats.copy()  # this keeps the existing stats from dmlab_gym
             level_name = self.unwrapped.level_name
 
             # add extra 'z_' to the summary key to put them towards the end on tensorboard (just convenience)
@@ -84,24 +84,24 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
             )
 
             ## ADDED ##
-            #log.warning(
+            # log.warning(
             #    "🏁 EPISODE FINISHED | Final Totals -> Hi-Hit: %s | Hi-Miss: %s | Lo-Hit: %s | Lo-Miss: %s",
             #    self.hi_hit_count, self.hi_miss_count, self.lo_hit_count, self.lo_miss_count
-            #)
+            # )
 
             info["episode_extra_stats"]["custom/highrew_hit"] = float(self.hi_hit_count)
             info["episode_extra_stats"]["custom/highrew_miss"] = float(self.hi_miss_count)
             info["episode_extra_stats"]["custom/lowrew_hit"] = float(self.lo_hit_count)
             info["episode_extra_stats"]["custom/lowrew_miss"] = float(self.lo_miss_count)
 
-            info["episode_extra_stats"]["custom/flexibility"] = existing_extra_stats.get("custom/flexibility", 0.0)
-            info["episode_extra_stats"]["custom/instr_switch"] = existing_extra_stats.get("custom/instr_switch", 1)
+            # info["episode_extra_stats"]["custom/flexibility"] = existing_extra_stats.get("custom/flexibility", 0.0)
+            # info["episode_extra_stats"]["custom/instr_switch"] = existing_extra_stats.get("custom/instr_switch", 1)
 
-            info["episode_extra_stats"]["custom/R_trials"] = existing_extra_stats.get("custom/R_trials", 0)
-            info["episode_extra_stats"]["custom/L_trials"] = existing_extra_stats.get("custom/L_trials", 0)
-            
-            #info["episode_extra_stats"]["custom/instr_block"] = existing_extra_stats.get("custom/instr_block", 0)
-            info["episode_extra_stats"]["custom/arm_obedience"] = existing_extra_stats.get("custom/arm_obedience", 0.0)
+            # info["episode_extra_stats"]["custom/R_trials"] = existing_extra_stats.get("custom/R_trials", 0)
+            # info["episode_extra_stats"]["custom/L_trials"] = existing_extra_stats.get("custom/L_trials", 0)
+
+            # info["episode_extra_stats"]["custom/instr_block"] = existing_extra_stats.get("custom/instr_block", 0)
+            # info["episode_extra_stats"]["custom/arm_obedience"] = existing_extra_stats.get("custom/arm_obedience", 0.0)
 
             # --- PACKAGE TIMELINES FOR YOUR LOCAL THESIS DATA ---
             info["hi_hit_history"] = self.hi_hit_history.copy()

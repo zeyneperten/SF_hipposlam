@@ -12,3 +12,7 @@ repos:
     rev: 7.1.0
     hooks:
     -   id: flake8
+        args: [
+          "--extend-ignore=E266,E262,E265,E402,F841,F541,E741,F811,E303,E711",
+          "--exclude=sf_working_directories/default,sf_working_directories/jannek,sf_xxl,sf_working_directories/zeynep/dmlab/wrappers/separate_HLcorewrapper.py"
+        ]

@@ -1,6 +1,6 @@
 import sys
-from pathlib import Path
 from multiprocessing.context import BaseContext
+from pathlib import Path
 from typing import Optional
 
 from tensorboardX import SummaryWriter
@@ -14,12 +14,13 @@ from sample_factory.envs.env_utils import register_env
 from sample_factory.train import make_runner
 from sample_factory.utils.typing import Config, Env, PolicyID
 from sample_factory.utils.utils import experiment_dir
+
+# from sf_working_directories.default.dmlab.custom_learner import make_hipposlam_learner
+from sf_working_directories.zeynep.dmlab.custom_actor_critic import make_hipposlam_actor_critic
 from sf_working_directories.zeynep.dmlab.custom_core import make_hipposlam_core
 from sf_working_directories.zeynep.dmlab.custom_decoder import make_hipposlam_decoder
 from sf_working_directories.zeynep.dmlab.custom_encoder import make_hipposlam_encoder
 from sf_working_directories.zeynep.dmlab.custom_params import add_hipposlam_env_args, hipposlam_override_defaults
-from sf_working_directories.zeynep.dmlab.oracle_transfer import prepare_oracle_transfer
-from sf_working_directories.zeynep.dmlab.oracle_transfer_learner import make_oracle_transfer_learner
 from sf_working_directories.zeynep.dmlab.dmlab_env import (
     DMLAB_ENVS,
     dmlab_extra_episodic_stats_processing,
@@ -28,11 +29,9 @@ from sf_working_directories.zeynep.dmlab.dmlab_env import (
     make_dmlab_env,
 )
 from sf_working_directories.zeynep.dmlab.dmlab_level_cache import DmlabLevelCaches, make_dmlab_caches
-
-# from sf_working_directories.default.dmlab.custom_learner import make_hipposlam_learner
-from sf_working_directories.zeynep.dmlab.custom_actor_critic import make_hipposlam_actor_critic
-
 from sf_working_directories.zeynep.dmlab.dmlab_params import add_dmlab_env_args, dmlab_override_defaults
+from sf_working_directories.zeynep.dmlab.oracle_transfer import prepare_oracle_transfer
+from sf_working_directories.zeynep.dmlab.oracle_transfer_learner import make_oracle_transfer_learner
 
 
 class DmlabEnvWithCache:
@@ -47,7 +46,6 @@ def register_dmlab_envs(level_caches: Optional[DmlabLevelCaches] = None):
     env_factory = DmlabEnvWithCache(level_caches)
     for env in DMLAB_ENVS:
         register_env(env.name, env_factory.make_env)
-
 
 
 def register_dmlab_components(level_caches: Optional[DmlabLevelCaches] = None, cfg: Config = None):
@@ -90,15 +88,13 @@ def initialize_level_cache(cfg: Config, mp_ctx: BaseContext) -> Optional[DmlabLe
 
 
 def maybe_overwrite_rnn_size(cfg):
-   if getattr(cfg, "cli_args.rnn_size", 0) == 0:
-       R = getattr(cfg, "Hippo_R", 8)
-       L = getattr(cfg, "Hippo_L", 48)
-       hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64)
-       rnn_size = hippo_n_feature * (R + L - 1) + 12 # 10 depth + 2 instruction features
-       cfg.cli_args["rnn_size"] = rnn_size
-       cfg.rnn_size = rnn_size
-
-
+    if getattr(cfg, "cli_args.rnn_size", 0) == 0:
+        R = getattr(cfg, "Hippo_R", 8)
+        L = getattr(cfg, "Hippo_L", 48)
+        hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64)
+        rnn_size = hippo_n_feature * (R + L - 1) + 12  # 10 depth + 2 instruction features
+        cfg.cli_args["rnn_size"] = rnn_size
+        cfg.rnn_size = rnn_size
 
 
 def parse_dmlab_args(argv=None, evaluation=False):
@@ -111,12 +107,10 @@ def parse_dmlab_args(argv=None, evaluation=False):
         # A target run's own checkpoint and saved configuration take precedence.
         # In particular, resuming must not require the original oracle file.
         target_dir = Path(experiment_dir(cfg, mkdir=False))
-        has_target_checkpoint = cfg.restart_behavior == "resume" and any(
-            target_dir.glob("checkpoint_p*/*.pth")
-        )
+        has_target_checkpoint = cfg.restart_behavior == "resume" and any(target_dir.glob("checkpoint_p*/*.pth"))
         if not has_target_checkpoint:
             prepare_oracle_transfer(cfg)
-    #maybe_overwrite_rnn_size(cfg) 
+    # maybe_overwrite_rnn_size(cfg)
     return cfg
 
 
@@ -130,7 +124,7 @@ def main():
     register_msg_handlers(cfg, runner)
 
     level_caches = initialize_level_cache(cfg, get_mp_ctx(cfg.serial_mode))
-    register_dmlab_components(level_caches, cfg) ## ADDED CFG
+    register_dmlab_components(level_caches, cfg)  ## ADDED CFG
 
     status = runner.init()
     if status == ExperimentStatus.SUCCESS:

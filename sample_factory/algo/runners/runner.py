@@ -342,26 +342,42 @@ class Runner(EventLoopObject, Configurable):
                 if len(reward_stats) > 0:
                     policy_reward_stats.append((policy_id, f"{np.mean(reward_stats):.3f}"))
             log.debug("Avg episode reward: %r", policy_reward_stats)
-        
+
         # --- ADDED CUSTOM LOGGER HERE! ---
         # Check if any of our four new outcome metrics exist in the rolling statistics buffer
-        if any(k in self.policy_avg_stats for k in ["custom/highrew_hit", "custom/highrew_miss", "custom/lowrew_hit", "custom/lowrew_miss"]):
+        if any(
+            k in self.policy_avg_stats
+            for k in ["custom/highrew_hit", "custom/highrew_miss", "custom/lowrew_hit", "custom/lowrew_miss"]
+        ):
             policy_custom_stats = []
-            
+
             for policy_id in range(self.cfg.num_policies):
                 # Safely get deques for all four stats, defaulting to empty arrays if they haven't arrived yet
-                hi_hit_stats = self.policy_avg_stats.get("custom/highrew_hit", [[] for _ in range(self.cfg.num_policies)])[policy_id]
-                hi_miss_stats = self.policy_avg_stats.get("custom/highrew_miss", [[] for _ in range(self.cfg.num_policies)])[policy_id]
-                lo_hit_stats = self.policy_avg_stats.get("custom/lowrew_hit", [[] for _ in range(self.cfg.num_policies)])[policy_id]
-                lo_miss_stats = self.policy_avg_stats.get("custom/lowrew_miss", [[] for _ in range(self.cfg.num_policies)])[policy_id]
-                R_trials_stats = self.policy_avg_stats.get("custom/R_trials", [[] for _ in range(self.cfg.num_policies)])[policy_id]
-                L_trials_stats = self.policy_avg_stats.get("custom/L_trials", [[] for _ in range(self.cfg.num_policies)])[policy_id]
+                hi_hit_stats = self.policy_avg_stats.get(
+                    "custom/highrew_hit", [[] for _ in range(self.cfg.num_policies)]
+                )[policy_id]
+                hi_miss_stats = self.policy_avg_stats.get(
+                    "custom/highrew_miss", [[] for _ in range(self.cfg.num_policies)]
+                )[policy_id]
+                lo_hit_stats = self.policy_avg_stats.get(
+                    "custom/lowrew_hit", [[] for _ in range(self.cfg.num_policies)]
+                )[policy_id]
+                lo_miss_stats = self.policy_avg_stats.get(
+                    "custom/lowrew_miss", [[] for _ in range(self.cfg.num_policies)]
+                )[policy_id]
+                R_trials_stats = self.policy_avg_stats.get(
+                    "custom/R_trials", [[] for _ in range(self.cfg.num_policies)]
+                )[policy_id]
+                L_trials_stats = self.policy_avg_stats.get(
+                    "custom/L_trials", [[] for _ in range(self.cfg.num_policies)]
+                )[policy_id]
 
                 # --- NEW COUNTING LOGIC FOR BLOCKS ---
                 # Changed from instr to R/L trial counting for HL because there is no oracle instruction
                 R_mean = int(np.mean(R_trials_stats)) if len(R_trials_stats) > 0 else 0
                 L_mean = int(np.mean(L_trials_stats)) if len(L_trials_stats) > 0 else 0
                 total_tracked = R_mean + L_mean
+                distribution_str = "[0/0 High at R | 0/0 High at L]"  # Fallback default
                 if total_tracked > 0:
                     distribution_str = f"[{R_mean}/{total_tracked} High at R | {L_mean}/{total_tracked} High at L]"
                 # --------------------------
@@ -380,7 +396,7 @@ class Runner(EventLoopObject, Configurable):
                         f"Lo-Hit (Lucky): {lo_hit_mean:.2f} | Lo-Miss: {lo_miss_mean:.2f}"
                     )
                     policy_custom_stats.append((policy_id, stat_string))
-            
+
             if len(policy_custom_stats) > 0:
                 log.debug("Custom stats: %r", policy_custom_stats)
         # ------------------------------------

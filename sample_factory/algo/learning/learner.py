@@ -575,7 +575,7 @@ class BaseLearner(Configurable):
                     if enc is not None and hasattr(enc, "set_hl_z"):
                         enc.set_hl_z(mb.hl_z)
             # Propagate the recorded high-level mode into the encoder.
-            head_outputs = self.actor_critic.forward_head(mb.normalized_obs)
+            # head_outputs = self.actor_critic.forward_head(mb.normalized_obs)
             if getattr(self.cfg, "hl_dg_from_prev_z", False):
                 # Actor states were saved before each action. Their final K entries
                 # are the mode that conditioned the actor's previous-frame DG.
@@ -587,7 +587,7 @@ class BaseLearner(Configurable):
                 # the actor. The trial history spans rollout boundaries and is
                 # used only to train the high-level recurrent update.
                 core = self.actor_critic.core
-                history = mb.rnn_states[:, core.history_start:core.history_start + core.history_size]
+                history = mb.rnn_states[:, core.history_start : core.history_start + core.history_size]
 
                 if mb.hl_z.sum().item() == 0.0:
                     log.warning("CRITICAL WARNING: mb.hl_z IS COMPLETELY EMPTY IN SHARED MEMORY!")
@@ -1024,11 +1024,11 @@ class DefaultLearner(BaseLearner):
         del outputs
 
         ## ADDED 01.10.26 Q-loss
-        core = getattr(self.actor_critic, 'core', getattr(self.actor_critic, 'actor_core', None))
-        if core is not None and hasattr(core, 'last_hl_loss'):
+        core = getattr(self.actor_critic, "core", getattr(self.actor_critic, "actor_core", None))
+        if core is not None and hasattr(core, "last_hl_loss"):
             hl_loss = core.last_hl_loss
 
-            hl_metrics = getattr(core, 'last_hl_metrics', {})
+            hl_metrics = getattr(core, "last_hl_metrics", {})
             for key, value in hl_metrics.items():
                 loss_summaries[key] = value
         else:
@@ -1041,7 +1041,7 @@ class DefaultLearner(BaseLearner):
             classifier_loss, event_count, accuracy = trial_end_classifier_loss(
                 self.actor_critic.hl_diversity_classifier,
                 mb.normalized_obs,
-                mb.rnn_states[:, -self.cfg.hl_K:],
+                mb.rnn_states[:, -self.cfg.hl_K :],
                 mb.valids,
             )
             hl_loss = hl_loss + self.cfg.hl_diversity_classifier_loss_coef * classifier_loss
@@ -1049,7 +1049,6 @@ class DefaultLearner(BaseLearner):
             loss_summaries["hl/diversity_event_count"] = event_count
             loss_summaries["hl/diversity_classifier_accuracy"] = accuracy
             loss_summaries["hl/diversity_bonus_mean"] = mb.hl_diversity_bonus.mean().item()
-        
 
         return action_distribution, policy_loss, exploration_loss, kl_old, kl_loss, value_loss, hl_loss, loss_summaries
 
@@ -1121,14 +1120,16 @@ class DefaultLearner(BaseLearner):
 
                 with timing.add_time("losses_postprocess"):
                     # noinspection PyTypeChecker
-                    actor_loss: Tensor = policy_loss + exploration_loss + kl_loss + hl_loss 
+                    actor_loss: Tensor = policy_loss + exploration_loss + kl_loss + hl_loss
                     critic_loss = value_loss
                     loss: Tensor = actor_loss + critic_loss
 
                     epoch_actor_losses[batch_num] = float(actor_loss)
 
                     ## ADDED 01.10 TO LOG, comment out later ##
-                    log.info("Batch %d | Total Loss: %.4f | HL-Loss: %.4f", batch_num, to_scalar(loss), to_scalar(hl_loss))
+                    log.info(
+                        "Batch %d | Total Loss: %.4f | HL-Loss: %.4f", batch_num, to_scalar(loss), to_scalar(hl_loss)
+                    )
 
                     high_loss = 30.0
                     if torch.abs(loss) > high_loss:
@@ -1139,7 +1140,7 @@ class DefaultLearner(BaseLearner):
                             to_scalar(value_loss),
                             to_scalar(exploration_loss),
                             to_scalar(kl_loss),
-                            to_scalar(hl_loss)
+                            to_scalar(hl_loss),
                         )
 
                         # perhaps something weird is happening, we definitely want summaries from this step
@@ -1174,7 +1175,7 @@ class DefaultLearner(BaseLearner):
                             torch.nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.cfg.max_grad_norm)
 
                     curr_policy_version = self.train_step  # policy version before the weight update
-                    
+
                     actual_lr = self.curr_lr
                     if num_invalids > 0:
                         # if we have masked (invalid) data we should reduce the learning rate accordingly

@@ -84,8 +84,8 @@ def policy_output_shapes(cfg: AttrDict, num_actions, num_action_distribution_par
             ("policy_version", []),
         ]
     # ADDED The high-level choice is made by the actor, not by the environment. Save
-    # the choice used by the decoder so recurrent learner replay can use it. 
-    # Allocating memory for hl mode tı save to the memory buffer. 
+    # the choice used by the decoder so recurrent learner replay can use it.
+    # Allocating memory for hl mode tı save to the memory buffer.
     if getattr(cfg, "core_name", None) == "BypassSS_HighLevelRNN":
         policy_outputs.append(("hl_z", [cfg.hl_K]))
     return policy_outputs

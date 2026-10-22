@@ -1,8 +1,10 @@
-import os
 import glob
+import itertools
+import os
+
 import torch
 import torch.nn.functional as F
-import itertools
+
 
 def check_weight_collapse(checkpoint_path=None, exp_dir=None):
     # 1. FIND THE CHECKPOINT (.pth file)
@@ -12,7 +14,7 @@ def check_weight_collapse(checkpoint_path=None, exp_dir=None):
         if not checkpoints:
             print(f"❌ No .pth files found in {exp_dir}")
             return
-        
+
         # Pick the one with the highest modification time (latest save)
         checkpoint_path = max(checkpoints, key=os.path.getmtime)
         print(f"Found latest checkpoint: {checkpoint_path}")
@@ -22,35 +24,35 @@ def check_weight_collapse(checkpoint_path=None, exp_dir=None):
         return
 
     print(f"\nLoading raw trained weights directly from: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     # SF stores the state dict inside 'model', 'model_state_dict', or at root
-    if 'model' in checkpoint:
-        state_dict = checkpoint['model']
-    elif 'model_state_dict' in checkpoint:
-        state_dict = checkpoint['model_state_dict']
+    if "model" in checkpoint:
+        state_dict = checkpoint["model"]
+    elif "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
     else:
         state_dict = checkpoint
 
     # 2. LOCATE THE Z-MODULATION WEIGHTS
     z_weights = None
     target_name = None
-    
+
     for key in state_dict.keys():
-        if 'film_gamma.weight' in key or 'context_proj.weight' in key:
+        if "film_gamma.weight" in key or "context_proj.weight" in key:
             target_name = key
             z_weights = state_dict[key].detach()
             break
 
     if z_weights is None:
-        decoder_keys = [k for k in state_dict.keys() if 'decoder.mlp' in k and 'weight' in k]
-        
+        decoder_keys = [k for k in state_dict.keys() if "decoder.mlp" in k and "weight" in k]
+
         if decoder_keys:
-            # Sort the keys alphabetically/numerically so we guarantee we grab 
+            # Sort the keys alphabetically/numerically so we guarantee we grab
             # the VERY FIRST layer (e.g., 'decoder.mlp.0.weight')
             target_name = sorted(decoder_keys)[0]
             full_weight = state_dict[target_name].detach()
-            
+
             # Because z is concatenated at the end of the visual features,
             # we slice exactly the last K columns!
             z_weights = full_weight[:, -4:]
@@ -58,14 +60,14 @@ def check_weight_collapse(checkpoint_path=None, exp_dir=None):
     if z_weights is None:
         print("❌ Could not find FiLM, Additive, or Concatenation weights in the checkpoint!")
         return
-        
+
     print(f"✅ Extracted weights from: {target_name}")
     print(f"   Shape of extracted z_weights: {z_weights.shape}")
-    
+
     # 3. COMPUTE METRICS
     # nn.Linear weights are shape [out_features, in_features]
     # We want columns to represent the modes (K)
-    if z_weights.shape[0] < z_weights.shape[1]: 
+    if z_weights.shape[0] < z_weights.shape[1]:
         # If rows are smaller than columns, it's likely transposed
         z_weights = z_weights.T
 
@@ -76,13 +78,13 @@ def check_weight_collapse(checkpoint_path=None, exp_dir=None):
         mod_type = "Additive"
     else:
         mod_type = "Concatenation"
-        
+
     print(f"Exact raw sum of all weights: {z_weights.sum().item()}")
-    
-    print("\n" + "="*50)
+
+    print("\n" + "=" * 50)
     print(f"MODE COLLAPSE ANALYSIS ({mod_type.upper()})")
-    print("="*50)
-    
+    print("=" * 50)
+
     # Check 1: L2 Norms
     norms = torch.norm(z_weights, p=2, dim=0)
     all_exactly_one = True
@@ -91,19 +93,19 @@ def check_weight_collapse(checkpoint_path=None, exp_dir=None):
         print(f"Mode {k} Weight Magnitude (L2 Norm): {norm_val:.6f}")
         if abs(norm_val - 1.0) > 1e-4:
             all_exactly_one = False
-            
+
     print("-" * 50)
-    
+
     # Check 2: Cosine Similarity
     for i, j in itertools.combinations(range(K), 2):
         vec_i = z_weights[:, i]
         vec_j = z_weights[:, j]
-        
+
         cos_sim = F.cosine_similarity(vec_i.unsqueeze(0), vec_j.unsqueeze(0), eps=1e-8).item()
         warning = " <--- ⚠️ COLLAPSED!" if cos_sim > 0.90 else ""
         print(f"Similarity between Mode {i} and Mode {j}: {cos_sim:.6f}{warning}")
 
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     if all_exactly_one:
         print("🚨 WARNING: The L2 norms are EXACTLY 1.000000!")
         print("🚨 This means PyTorch's `nn.init.orthogonal_` is untouched.")

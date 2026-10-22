@@ -27,9 +27,15 @@ def main():
     torch.set_num_threads(1)
     torch.manual_seed(args.seed)
     cfg = SimpleNamespace(
-        Hippo_n_feature=2, Hippo_R=1, Hippo_L=2, hl_K=4,
-        hl_d_H=16, hl_history_len=8, hl_is_policy=False,
-        hl_deterministic=False, oracle_context=False,
+        Hippo_n_feature=2,
+        Hippo_R=1,
+        Hippo_L=2,
+        hl_K=4,
+        hl_d_H=16,
+        hl_history_len=8,
+        hl_is_policy=False,
+        hl_deterministic=False,
+        oracle_context=False,
     )
     core = HighLevelRNNWrapperCore(cfg, input_size=9)
     model = core.hl_learner
@@ -78,8 +84,11 @@ def main():
 
         if episode in (0, 1, 4, 9, 19, 49, 99, 199, 299, 399, args.episodes - 1):
             success = sum(successes[-25:]) / 25
-            print(f"episode={episode + 1:3d} updates={updates:4d} "
-                  f"sampled_success_last25={success:.3f} q_loss={loss.item():.4f}", flush=True)
+            print(
+                f"episode={episode + 1:3d} updates={updates:4d} "
+                f"sampled_success_last25={success:.3f} q_loss={loss.item():.4f}",
+                flush=True,
+            )
 
 
 if __name__ == "__main__":

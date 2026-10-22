@@ -1,4 +1,5 @@
 from typing import Tuple
+
 import torch
 from torch import Tensor
 
@@ -31,8 +32,12 @@ def generate_shift_register_weights(
         raise ValueError("injection_width must lie in [1, register_length].")
 
     hidden_size = n_feature * register_length
-    W_in = torch.zeros(hidden_size, n_feature, device=device, dtype=dtype) # inject DG features into first injection_width slots of each CA3 register
-    W_hh = torch.zeros(hidden_size, hidden_size, device=device, dtype=dtype) # move each CA3 register slot to the next slot in the next time step
+    W_in = torch.zeros(
+        hidden_size, n_feature, device=device, dtype=dtype
+    )  # inject DG features into first injection_width slots of each CA3 register
+    W_hh = torch.zeros(
+        hidden_size, hidden_size, device=device, dtype=dtype
+    )  # move each CA3 register slot to the next slot in the next time step
 
     for feature in range(n_feature):
         start = feature * register_length

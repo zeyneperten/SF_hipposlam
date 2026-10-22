@@ -13,8 +13,8 @@ import gymnasium as gym
 import torch
 from torch import nn
 
-from sample_factory.model.actor_critic import ActorCriticSharedWeights
 from sample_factory.algo.learning.learner import DefaultLearner
+from sample_factory.model.actor_critic import ActorCriticSharedWeights
 
 # The focused encoder test substitutes its image backbone; torchvision is not
 # needed on the lightweight test host.
@@ -23,14 +23,9 @@ if "torchvision" not in sys.modules:
     torchvision.models = types.ModuleType("torchvision.models")
     sys.modules["torchvision"] = torchvision
     sys.modules["torchvision.models"] = torchvision.models
-from sf_working_directories.zeynep.dmlab import custom_encoder
-from sf_working_directories.zeynep.dmlab import custom_actor_critic
-from sf_working_directories.zeynep.dmlab.custom_decoder import (
-    MlpDecoderAdditiveJit, MlpDecoderFiLMJit,
-)
-from sf_working_directories.zeynep.dmlab.oracle_transfer import (
-    load_oracle_controller, prepare_oracle_transfer,
-)
+from sf_working_directories.zeynep.dmlab import custom_actor_critic, custom_encoder
+from sf_working_directories.zeynep.dmlab.custom_decoder import MlpDecoderAdditiveJit, MlpDecoderFiLMJit
+from sf_working_directories.zeynep.dmlab.oracle_transfer import load_oracle_controller, prepare_oracle_transfer
 from sf_working_directories.zeynep.dmlab.oracle_transfer_learner import OracleTransferLearner
 
 
@@ -55,13 +50,24 @@ class ToyDepthEncoder(nn.Module):
 
 def encoder_cfg(mod, oracle):
     return SimpleNamespace(
-        Hippo_n_feature=2, depth_sensor=True, res_h=2, res_w=2,
-        DG_context_mod=mod, Decoder_context_mod="FiLM",
-        oracle_context=oracle, hl_dg_from_prev_z=not oracle,
-        with_number_instruction=True, number_instruction_coef=9,
-        hl_K=4 if oracle else 2, reward_input=False,
-        DG_lr=None, DG_temperature=None, DG_batch_q=None, DG_softmax=None,
-        DG_name="batchnorm_relu", DG_BN_intercept=0.0,
+        Hippo_n_feature=2,
+        depth_sensor=True,
+        res_h=2,
+        res_w=2,
+        DG_context_mod=mod,
+        Decoder_context_mod="FiLM",
+        oracle_context=oracle,
+        hl_dg_from_prev_z=not oracle,
+        with_number_instruction=True,
+        number_instruction_coef=9,
+        hl_K=4 if oracle else 2,
+        reward_input=False,
+        DG_lr=None,
+        DG_temperature=None,
+        DG_batch_q=None,
+        DG_softmax=None,
+        DG_name="batchnorm_relu",
+        DG_BN_intercept=0.0,
         core_name="BypassSS_HighLevelRNN",
     )
 
@@ -101,8 +107,9 @@ class OracleTransferTests(unittest.TestCase):
             "prev_trial_reward": torch.zeros(2, 1),
         }
         mode = torch.eye(2)
-        with patch.object(custom_encoder, "make_img_encoder", return_value=ToyImageEncoder()), \
-             patch.object(custom_encoder, "DepthEncoder", ToyDepthEncoder):
+        with patch.object(custom_encoder, "make_img_encoder", return_value=ToyImageEncoder()), patch.object(
+            custom_encoder, "DepthEncoder", ToyDepthEncoder
+        ):
             for variant in ("concat", "multiply", "sigmoid"):
                 with self.subTest(variant=variant):
                     source = custom_encoder.HipposlamEncoder(encoder_cfg(variant, True), obs_space)
@@ -128,10 +135,9 @@ class OracleTransferTests(unittest.TestCase):
         self.assertRaises(ValueError, ActorCriticSharedWeights.forward_head, Dummy(), {})
 
     def test_decoder_and_action_logits_keep_oracle_modes_zero_and_one(self):
-        cfg = AttrConfig(decoder_mlp_layers=[5], use_jit=False,
-                         nonlinearity="relu", context_injection_coef=1.7)
+        cfg = AttrConfig(decoder_mlp_layers=[5], use_jit=False, nonlinearity="relu", context_injection_coef=1.7)
         base = torch.randn(2, 3)
-        oracle_context = torch.tensor([[1., 0., 0., 0.], [0., 1., 0., 0.]])
+        oracle_context = torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
         learned_context = oracle_context[:, :2]
         for decoder_class in (MlpDecoderFiLMJit, MlpDecoderAdditiveJit):
             with self.subTest(decoder=decoder_class.__name__):
@@ -158,16 +164,30 @@ class OracleTransferTests(unittest.TestCase):
             policy.mkdir()
             checkpoint = policy / "best_0001.pth"
             source_cfg = {
-                "core_name": "BypassSS_HighLevelRNN", "oracle_context": True,
-                "with_number_instruction": True, "hl_K": 4, "decoder_type": "mlp",
-                "actor_critic_share_weights": True, "DG_context_mod": "concat",
-                "Decoder_context_mod": "FiLM", "Hippo_n_feature": 2, "Hippo_L": 3,
-                "Hippo_R": 1, "depth_sensor": True, "number_instruction_coef": 200,
+                "core_name": "BypassSS_HighLevelRNN",
+                "oracle_context": True,
+                "with_number_instruction": True,
+                "hl_K": 4,
+                "decoder_type": "mlp",
+                "actor_critic_share_weights": True,
+                "DG_context_mod": "concat",
+                "Decoder_context_mod": "FiLM",
+                "Hippo_n_feature": 2,
+                "Hippo_L": 3,
+                "Hippo_R": 1,
+                "depth_sensor": True,
+                "number_instruction_coef": 200,
             }
             (run / "config.json").write_text(json.dumps(source_cfg))
-            cfg = dict(source_cfg, oracle_init_checkpoint=str(checkpoint),
-                       oracle_freeze_controller=True, hl_diversity_reward_coef=0.0,
-                       hl_d_H=3, hl_history_len=2, cli_args={})
+            cfg = dict(
+                source_cfg,
+                oracle_init_checkpoint=str(checkpoint),
+                oracle_freeze_controller=True,
+                hl_diversity_reward_coef=0.0,
+                hl_d_H=3,
+                hl_history_len=2,
+                cli_args={},
+            )
             cfg = SimpleNamespace(**cfg)
             actor = ToyActor()
             source = {key: value.clone() for key, value in actor.state_dict().items()}
@@ -189,9 +209,13 @@ class OracleTransferTests(unittest.TestCase):
                 load_oracle_controller(actor, checkpoint)
 
     def test_frozen_controller_keeps_batchnorm_statistics_fixed(self):
-        cfg = AttrConfig(oracle_init_checkpoint="source.pth", oracle_freeze_controller=True,
-                         hl_train_fix_base=False, hl_diversity_reward_coef=0.0,
-                         core_name="BypassSS_HighLevelRNN")
+        cfg = AttrConfig(
+            oracle_init_checkpoint="source.pth",
+            oracle_freeze_controller=True,
+            hl_train_fix_base=False,
+            hl_diversity_reward_coef=0.0,
+            core_name="BypassSS_HighLevelRNN",
+        )
         actor = ToyActor()
         actor.obs_normalizer = nn.BatchNorm1d(3)
         actor.encoder.bn = nn.BatchNorm1d(3)
@@ -212,10 +236,11 @@ class OracleTransferTests(unittest.TestCase):
     def test_target_checkpoint_resume_skips_oracle_initializer(self):
         learner = OracleTransferLearner.__new__(OracleTransferLearner)
         learner.cfg = AttrConfig(load_checkpoint_kind="latest", oracle_init_checkpoint="missing.pth")
-        with patch.object(OracleTransferLearner, "checkpoint_dir", return_value="target"), \
-             patch.object(OracleTransferLearner, "get_checkpoints", return_value=["checkpoint_1.pth"]), \
-             patch.object(DefaultLearner, "load_from_checkpoint", return_value=None) as resume, \
-             patch("sf_working_directories.zeynep.dmlab.oracle_transfer_learner.load_oracle_controller") as transfer:
+        with patch.object(OracleTransferLearner, "checkpoint_dir", return_value="target"), patch.object(
+            OracleTransferLearner, "get_checkpoints", return_value=["checkpoint_1.pth"]
+        ), patch.object(DefaultLearner, "load_from_checkpoint", return_value=None) as resume, patch(
+            "sf_working_directories.zeynep.dmlab.oracle_transfer_learner.load_oracle_controller"
+        ) as transfer:
             learner.load_from_checkpoint(0)
         resume.assert_called_once_with(0, load_progress=True)
         transfer.assert_not_called()
@@ -224,10 +249,11 @@ class OracleTransferTests(unittest.TestCase):
         learner = OracleTransferLearner.__new__(OracleTransferLearner)
         learner.cfg = AttrConfig(load_checkpoint_kind="latest", oracle_init_checkpoint="source.pth")
         learner.actor_critic = ToyActor()
-        with patch.object(OracleTransferLearner, "checkpoint_dir", return_value="target"), \
-             patch.object(OracleTransferLearner, "get_checkpoints", return_value=[]), \
-             patch.object(DefaultLearner, "load_from_checkpoint", return_value=None) as resume, \
-             patch("sf_working_directories.zeynep.dmlab.oracle_transfer_learner.load_oracle_controller") as transfer:
+        with patch.object(OracleTransferLearner, "checkpoint_dir", return_value="target"), patch.object(
+            OracleTransferLearner, "get_checkpoints", return_value=[]
+        ), patch.object(DefaultLearner, "load_from_checkpoint", return_value=None) as resume, patch(
+            "sf_working_directories.zeynep.dmlab.oracle_transfer_learner.load_oracle_controller"
+        ) as transfer:
             learner.load_from_checkpoint(0)
         transfer.assert_called_once_with(learner.actor_critic, "source.pth")
         resume.assert_not_called()

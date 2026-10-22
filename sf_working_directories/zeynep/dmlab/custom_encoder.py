@@ -272,12 +272,12 @@ class DGProjection_batchnorm_relu(nn.Module):
         self.intercept = intercept
         self.modulate = modulate
 
-    def forward(self, x: torch.Tensor, context = None) -> torch.Tensor:
-        x = self.linear(x)  # Shape: [batch_size, out_features] 
-        # ADD FLAG HERE do instruction multiplication before batchnorm 
+    def forward(self, x: torch.Tensor, context=None) -> torch.Tensor:
+        x = self.linear(x)  # Shape: [batch_size, out_features]
+        # ADD FLAG HERE do instruction multiplication before batchnorm
         if self.modulate and context is not None:
             # Assuming context is of shape [batch_size, out_features] or can be transformed to that shape
-            x = x * context 
+            x = x * context
         x = self.batchnorm1d(x)
         # Replace logits with softmaxed probabilities.
         x = self.activation(x - self.intercept)
@@ -579,15 +579,15 @@ class HipposlamEncoder(Encoder):
         self.basic_encoder = make_img_encoder(cfg, obs_cnn)
         self.encoder_out_size = self.basic_encoder.get_out_size()
 
-        self.DG_context_mod = getattr(cfg, "DG_context_mod", "None") ## ADDED 
-        self.Decoder_context_mod = getattr(cfg, "Decoder_context_mod", "None") ## ADDED 
+        self.DG_context_mod = getattr(cfg, "DG_context_mod", "None")  ## ADDED
+        self.Decoder_context_mod = getattr(cfg, "Decoder_context_mod", "None")  ## ADDED
         self.oracle_context = getattr(cfg, "oracle_context", False)
         self.hl_dg_from_prev_z = getattr(cfg, "hl_dg_from_prev_z", False)
         if self.hl_dg_from_prev_z and (self.oracle_context or cfg.hl_K != 2):
             raise ValueError("hl_dg_from_prev_z requires oracle_context=False and hl_K=2")
         has_dg_context = self.oracle_context or self.hl_dg_from_prev_z
-        
-        self.reward_input = getattr(cfg, "reward_input", False) ## ADDED 
+
+        self.reward_input = getattr(cfg, "reward_input", False)  ## ADDED
 
         ## 11.10.2026 ADDED High-Level mode DG modulation initialization ##
         self.hl_DG_mod = getattr(cfg, "hl_DG_mod", "None")
@@ -630,7 +630,7 @@ class HipposlamEncoder(Encoder):
         # self.lstm_h0 = nn.Parameter(initial_hidden_values, requires_grad=True)
         # self.lstm_c0 = nn.Parameter(initial_hidden_values, requires_grad=True)
 
-        #self.encoder_out_size += self.instructions_lstm_units 
+        # self.encoder_out_size += self.instructions_lstm_units
 
         # Instructions enter DG only in concat mode. Instead of doing substraction like previously, we will add them to the encoder output size only in concat mode. 31.08.26
         if has_dg_context and self.DG_context_mod == "concat":
@@ -639,12 +639,14 @@ class HipposlamEncoder(Encoder):
         if self.high_level and self.hl_DG_mod == "concat":
             self.encoder_out_size += self.hl_K
 
-        needs_context = has_dg_context and (self.DG_context_mod == "multiply" or self.DG_context_mod == "sigmoid" or self.Decoder_context_mod != "None")
+        needs_context = has_dg_context and (
+            self.DG_context_mod == "multiply" or self.DG_context_mod == "sigmoid" or self.Decoder_context_mod != "None"
+        )
         if needs_context:
             self.instruction_embed_layer = nn.Linear(self.instructions_lstm_units, cfg.Hippo_n_feature)
 
         ## 11.10.2026 ADDED High-Level mode embedding layer for multiply/sigmoid DG modulation ##
-        if self.high_level and self.hl_DG_mod in ("multiply", "sigmoid"):
+        if self.high_level and self.hl_DG_mod in ("gated", "multiply", "sigmoid"):
             self.hl_mode_embed_layer = nn.Linear(self.hl_K, cfg.Hippo_n_feature)
             nn.init.orthogonal_(self.hl_mode_embed_layer.weight)
             nn.init.ones_(self.hl_mode_embed_layer.bias)
@@ -687,8 +689,10 @@ class HipposlamEncoder(Encoder):
             # modulate=(self.DG_context_mod == "multiply") # ADDED - PREVIOUS
             # 11.10.2026 ADDED: modulate with hl_DG_mod as well
             self.DG_projection = DGProjection_batchnorm_relu(
-                self.encoder_out_size, cfg.Hippo_n_feature, intercept=intercept,
-                modulate=(self.DG_context_mod == "multiply" or (self.high_level and self.hl_DG_mod == "multiply"))
+                self.encoder_out_size,
+                cfg.Hippo_n_feature,
+                intercept=intercept,
+                modulate=(self.DG_context_mod == "multiply" or (self.high_level and self.hl_DG_mod == "multiply")),
             )
         elif cfg.DG_name == "batchnorm_relu_fixed":
             intercept = getattr(cfg, "DG_BN_intercept", 2)
@@ -717,22 +721,34 @@ class HipposlamEncoder(Encoder):
             self.high_level = True
             self.reward_input = False
 
-            if not self.hl_dg_from_prev_z:
-                self.dg_only_no_bypass_instr = True
+            # if not self.hl_dg_from_prev_z:
+            #    self.dg_only_no_bypass_instr = True
+            self.dg_only_no_bypass_instr = (
+                True  # ADDED 13.10.2026 - HighLevel core should not have bypass or instruction input to DG
+            )
+
+        # --- SimGaY Gated DG Modulation (High-Level Only) ---
+        self.hl_DG_mod = getattr(cfg, "hl_DG_mod", "None")
+        if self.high_level and self.hl_DG_mod == "gated":
+            self.dg_gate_layer = nn.Linear(self.hl_K, cfg.Hippo_n_feature)
+            # Initialize to zero so the initial multiplier is exactly 1.0 (no visual distortion)
+            nn.init.zeros_(self.dg_gate_layer.weight)
+            nn.init.zeros_(self.dg_gate_layer.bias)
+        # ----------------------------------------------------
 
         if hasattr(cfg, "depth_sensor"):
-           log.info(f"denpth_sensor {cfg.depth_sensor}")
-           if self.depth_sensor:
+            log.info(f"denpth_sensor {cfg.depth_sensor}")
+            if self.depth_sensor:
                 depth_size = self.depth_encoder.get_out_size()
                 if self.dg_only_no_bypass_instr:
-                   bypass_features = depth_size
+                    bypass_features = depth_size
                 else:
-                   bypass_features = depth_size + self.instructions_lstm_units
-           else:
-               if self.dg_only_no_bypass_instr:
+                    bypass_features = depth_size + self.instructions_lstm_units
+            else:
+                if self.dg_only_no_bypass_instr:
                     bypass_features = 0
-               else:
-                   bypass_features = self.instructions_lstm_units
+                else:
+                    bypass_features = self.instructions_lstm_units
 
         if cfg.core_name.startswith("Bypass"):  # "Gate":
             self.bypass = True
@@ -741,22 +757,24 @@ class HipposlamEncoder(Encoder):
         else:
             self.bypass = False
             log.info(f"not using bypass, dim {bypass_features}")
-        
+
         ### ADDED reward_input to the encoder output, so that we can use it for DG projection ###
         # Number of scalar features for reward input (e.g. 1 float)
         if self.reward_input:
-            tmp_out_size += 1 
+            tmp_out_size += 1
 
         if self.high_level:
-            tmp_out_size += 3 # to pass outcome_event and prev_reward and chosen_arm to the high-level core
-            if self.oracle_context: # pass inst_block to the high-level core
+            tmp_out_size += (
+                4  # to pass outcome_event and prev_reward and chosen_arm to the high-level core AND CHOSEN_ARM_PULSE
+            )
+            if self.oracle_context:  # pass inst_block to the high-level core
                 tmp_out_size += 1
-            log.info(f"HighLevel core: dim {tmp_out_size} (including outcome_event and prev_reward)")
+            log.info(f"HighLevel core: dim {tmp_out_size}")
         ##########################################################################################
 
         self.encoder_out_size = tmp_out_size
-        #log.info(f"!!! DEBUG: INIT CALCULATED SIZE: {self.encoder_out_size} !!!")
-        #log.info(f"!!! DEBUG: bypass SIZE: {bypass_features} !!!")
+        # log.info(f"!!! DEBUG: INIT CALCULATED SIZE: {self.encoder_out_size} !!!")
+        # log.info(f"!!! DEBUG: bypass SIZE: {bypass_features} !!!")
         self.cpu_device = torch.device("cpu")
 
         # log.info("=================================== memory=========================")
@@ -783,15 +801,16 @@ class HipposlamEncoder(Encoder):
     ## 11.10.2026 ADDED Helper to set latched high-level mode vector ##
     def set_hl_z(self, z):
         self.current_hl_z = z
+
     #
-    
+
     def forward(self, obs_dict, previous_mode=None):
         # obs_cnn = obs_dict["obs"].copy()
         if self.depth_sensor:
             obs_cnn = obs_dict["obs"][:, :3, :, :]
         else:
             obs_cnn = obs_dict["obs"][:, :, :, :]
-        x = self.basic_encoder(obs_cnn) # this is the visual features
+        x = self.basic_encoder(obs_cnn)  # this is the visual features
 
         ## ADDED ##
         reward_feat = None
@@ -811,10 +830,11 @@ class HipposlamEncoder(Encoder):
             instr = obs_dict[DMLAB_INSTRUCTIONS]
 
             last_outputs = (
-                torch.nn.functional.one_hot(torch.clamp(instr.squeeze(1) - 1, min=0).long(), num_classes=2).float() * self.number_instruction_coef
+                torch.nn.functional.one_hot(torch.clamp(instr.squeeze(1) - 1, min=0).long(), num_classes=2).float()
+                * self.number_instruction_coef
             )
-            #log.info(last_outputs) # this should be a tensor of shape [batch_size, 3] with one-hot encoding of the instruction number
-            #log.info(f"Batch Instructions: {current_instructions} | Encoded Shape: {last_outputs.shape}")
+            # log.info(last_outputs) # this should be a tensor of shape [batch_size, 3] with one-hot encoding of the instruction number
+            # log.info(f"Batch Instructions: {current_instructions} | Encoded Shape: {last_outputs.shape}")
 
         elif self.oracle_context:
 
@@ -847,19 +867,44 @@ class HipposlamEncoder(Encoder):
         hl_dg = getattr(self, "hl_dg_from_prev_z", False)
         DG_mod = self.DG_context_mod if (self.oracle_context or hl_dg) else "None"
         Dec_mod = self.Decoder_context_mod if (self.oracle_context or hl_dg) else "None"
-        if getattr(self, "high_level", False):
-            # 11.10.2026 ADDED: allow decoder to use z_t for context modulation
-            pass
 
         depth_out = None
         if self.depth_sensor:
             depth_out = self.depth_encoder(obs_dict["obs"][:, -1:, :, :])
             depth_out = depth_out.view(obs_dict["obs"].size(0), -1)
-                
-                # ===== Regime selection =====
-        ## 11.10.2026 ADDED High-level mode DG modulation regime ##
+
+        ## 13.10.2026 safely handle batch size changed
         if self.high_level and self.hl_DG_mod != "None":
-            hl_z = obs_dict.get("hl_z", getattr(self, "current_hl_z", None))
+            hl_z = None
+            if previous_mode is not None:
+                hl_z = previous_mode
+            elif isinstance(obs_dict, dict) and "hl_z" in obs_dict:
+                hl_z = obs_dict["hl_z"]
+            elif getattr(self, "current_hl_z", None) is not None:
+                hl_z = getattr(self, "current_hl_z")
+
+            if hl_z is None:
+                hl_z = x.new_zeros(x.shape[0], self.hl_K)
+            else:
+                if hl_z.dim() == 1:
+                    hl_z = hl_z.unsqueeze(0)
+                if hl_z.shape[0] == 1 and x.shape[0] > 1:
+                    hl_z = hl_z.expand(x.shape[0], -1)
+                elif hl_z.shape[0] != x.shape[0]:
+                    if hl_z.shape[0] > x.shape[0]:
+                        hl_z = hl_z[: x.shape[0]]
+                    else:
+                        hl_z = x.new_zeros(x.shape[0], self.hl_K)
+                hl_z = hl_z.to(device=x.device, dtype=x.dtype)
+
+            # --- Frame-0 fallback for Oracle mode so it doesn't get stuck with zeros ---
+            if (hl_z is None or (self.oracle_context and hl_z.sum() == 0)) and "inst_block" in obs_dict:
+                raw = obs_dict["inst_block"].squeeze(1) - 1
+                hl_z = torch.nn.functional.one_hot(
+                    torch.clamp(raw, 0, self.hl_K - 1).long(), num_classes=self.hl_K
+                ).float()
+            # ---------------------------------------------------------------------------
+
             if hl_z is None:
                 hl_z = x.new_zeros(x.shape[0], self.hl_K)
             else:
@@ -869,36 +914,63 @@ class HipposlamEncoder(Encoder):
                     hl_z = hl_z.expand(x.shape[0], -1)
                 hl_z = hl_z.to(device=x.device, dtype=x.dtype)
 
-            if self.hl_DG_mod == "multiply":
-                embedded_mode = self.hl_mode_embed_layer(hl_z)
+            if hl_z.dim() == 2 and hl_z.shape[-1] > 1:
+                instr = hl_z.argmax(dim=-1, keepdim=True) + 1
+            else:
+                instr = hl_z
+
+            mode_encoded = (
+                torch.nn.functional.one_hot(
+                    torch.clamp(instr.squeeze(1) - 1, 0, self.hl_K - 1).long(), num_classes=self.hl_K
+                )
+                * self.number_instruction_coef
+            ).to(device=x.device, dtype=x.dtype)
+
+            # --- DG Modulation Schemes ---
+            if self.hl_DG_mod == "gated":
+                # SimGaY formula: DG(x) * (1.0 + tanh(gate))
+                # gate = torch.tanh(self.dg_gate_layer(hl_z))
+                gate = torch.tanh(self.dg_gate_layer(mode_encoded))
+                tmp_out = self.DG_projection(x) * (1.0 + gate)
+
+            elif self.hl_DG_mod == "multiply":
+                # embedded_mode = self.hl_mode_embed_layer(hl_z)
+                embedded_mode = self.hl_mode_embed_layer(mode_encoded)
                 tmp_out = self.DG_projection(x, context=embedded_mode)
+
             elif self.hl_DG_mod == "sigmoid":
-                embedded_mode = torch.sigmoid(self.hl_mode_embed_layer(hl_z))
+                # embedded_mode = torch.sigmoid(self.hl_mode_embed_layer(hl_z))
+                embedded_mode = torch.sigmoid(self.hl_mode_embed_layer(mode_encoded))
                 tmp_out = self.DG_projection(x) * embedded_mode
+
             elif self.hl_DG_mod == "concat":
-                # x_cat = torch.cat((x, hl_z), dim=1) # PREVIOUS
-                ## 11.10.2026 ADDED: scale one-hot mode by number_instruction_coef for concat ##
-                x_cat = torch.cat((x, hl_z * self.number_instruction_coef), dim=1)
+                x_cat = torch.cat((x, mode_encoded), dim=1)
                 tmp_out = self.DG_projection(x_cat)
+
             else:
                 tmp_out = self.DG_projection(x)
-
             if getattr(self, "dg_only_no_bypass_instr", False):
-                if self.depth_sensor: bypass_out = depth_out
-                else: bypass_out = x
+                if self.depth_sensor:
+                    bypass_out = depth_out
+                else:
+                    bypass_out = x
             else:
-                if self.depth_sensor: bypass_out = depth_out
-                else: bypass_out = x
+                if self.depth_sensor:
+                    bypass_out = depth_out
+                else:
+                    bypass_out = x
 
         elif DG_mod != "None" and Dec_mod == "None":
-                # 1. DG-only context: instructions modulate DG, do NOT go to decoder/bypass
-                # No concat of instructions into x here: context only via embedded_instr
+            # 1. DG-only context: instructions modulate DG, do NOT go to decoder/bypass
+            # No concat of instructions into x here: context only via embedded_instr
             if DG_mod == "multiply":
                 embedded_instr = self.instruction_embed_layer(last_outputs)
                 tmp_out = self.DG_projection(x, context=embedded_instr)
             elif DG_mod == "sigmoid":
+                # x_cat = torch.cat((x, last_outputs), dim=1)
                 embedded_instr = self.instruction_embed_layer(last_outputs)
                 embedded_instr = torch.sigmoid(embedded_instr)
+                # tmp_out = self.DG_projection(torch_cat) * embedded_instr
                 tmp_out = self.DG_projection(x) * embedded_instr
             elif DG_mod == "concat":
                 # Concatenate the instructions with the input
@@ -906,18 +978,18 @@ class HipposlamEncoder(Encoder):
                 tmp_out = self.DG_projection(x_cat)
             else:
                 tmp_out = self.DG_projection(x)
-            
+
                 # Bypass carries only visual/depth (no instructions)
             if self.depth_sensor:
                 bypass_out = depth_out
             else:
                 bypass_out = x
-            
+
         elif DG_mod == "None" and Dec_mod != "None":
-                # 2. Decoder-only context: DG/core see no instructions; decoder gets them via bypass/decoder_context
+            # 2. Decoder-only context: DG/core see no instructions; decoder gets them via bypass/decoder_context
             tmp_out = self.DG_projection(x)
-            
-                # Bypass carries instructions (and depth if present)
+
+            # Bypass carries instructions (and depth if present)
             if getattr(self, "dg_only_no_bypass_instr", False):
                 if self.depth_sensor:
                     bypass_out = depth_out
@@ -929,9 +1001,8 @@ class HipposlamEncoder(Encoder):
                 else:
                     bypass_out = last_outputs
 
-            
         elif DG_mod != "None" and Dec_mod != "None":
-                # 3. DG + Decoder context: instructions modulate DG AND are visible to decoder
+            # 3. DG + Decoder context: instructions modulate DG AND are visible to decoder
             if DG_mod == "multiply":
                 embedded_instr = self.instruction_embed_layer(last_outputs)
                 tmp_out = self.DG_projection(x, context=embedded_instr)
@@ -944,7 +1015,7 @@ class HipposlamEncoder(Encoder):
                 tmp_out = self.DG_projection(x_cat)
             else:
                 tmp_out = self.DG_projection(x)
-            
+
                 # Bypass also carries raw instructions (and depth if present)
             if getattr(self, "dg_only_no_bypass_instr", False):
                 if self.depth_sensor:
@@ -956,23 +1027,23 @@ class HipposlamEncoder(Encoder):
                     bypass_out = torch.cat((depth_out, last_outputs), dim=1)
                 else:
                     bypass_out = last_outputs
-            
+
         else:
-                # 0. No context: plain DG + optional visual/depth bypass
+            # 0. No context: plain DG + optional visual/depth bypass
             tmp_out = self.DG_projection(x)
             if self.depth_sensor:
                 bypass_out = depth_out
             else:
                 bypass_out = x
-            
+
         if self.bypass:
             tmp_out = torch.cat((tmp_out, bypass_out), dim=1)
         elif hasattr(self, "dense"):
             dense_out = self.dense(x)
             tmp_out = torch.cat((tmp_out, dense_out), dim=1)
-        
+
         # DEBUG #
-        #log.warning(
+        # log.warning(
         #    "ENCODER: DG_mod=%s Dec_mod=%s x=%s tmp_out=%s bypass_out=%s bypass=%s",
         #    DG_mod,
         #    Dec_mod,
@@ -980,7 +1051,7 @@ class HipposlamEncoder(Encoder):
         #    tuple(tmp_out.shape),
         #    tuple(bypass_out.shape),
         #    self.bypass,
-        #)
+        # )
 
         ### ADDED REWARD SO THAT IT DOESN'T GO THROUGH DG PROJECTION, BUT IS CONCATENATED TO THE OUTPUT OF THE ENCODER ###
         if self.reward_input:
@@ -990,11 +1061,12 @@ class HipposlamEncoder(Encoder):
             chosen_arm = obs_dict.get("chosen_arm").to(device=tmp_out.device, dtype=tmp_out.dtype)
             outcome_event = obs_dict.get("outcome_event").to(device=tmp_out.device, dtype=tmp_out.dtype)
             prev_trial_reward = obs_dict.get("prev_trial_reward").to(device=tmp_out.device, dtype=tmp_out.dtype)
+            chosen_arm_pulse = obs_dict.get("chosen_arm_pulse").to(device=tmp_out.device, dtype=tmp_out.dtype)
             if self.oracle_context:
                 inst_block = obs_dict.get("inst_block").to(device=tmp_out.device, dtype=tmp_out.dtype)
                 tmp_out = torch.cat((tmp_out, inst_block, chosen_arm, outcome_event, prev_trial_reward), dim=1)
             else:
-                tmp_out = torch.cat((tmp_out, chosen_arm, outcome_event, prev_trial_reward), dim=1)
+                tmp_out = torch.cat((tmp_out, chosen_arm_pulse, chosen_arm, outcome_event, prev_trial_reward), dim=1)
 
         return tmp_out
 
@@ -1007,6 +1079,7 @@ class ResNet18Layer2(Encoder):
     Use ResNet-18 up to layer2 (i.e., conv1/bn1/relu/maxpool -> layer1 -> layer2),
     then a downsample (AvgPool2d) and flatten.
     """
+
     def __init__(self, cfg, obs_space, pretrained=True, fixed=True, down_k=3, down_s=2, down_p=1):
         super().__init__(cfg)
 
@@ -1040,13 +1113,13 @@ class ResNet18Layer2(Encoder):
 
         # --- Build the feature trunk up to layer2
         stem = nn.Sequential(
-            resnet.conv1,   # 64, stride=2, kernel=7
+            resnet.conv1,  # 64, stride=2, kernel=7
             resnet.bn1,
             resnet.relu,
-            resnet.maxpool, # /4 spatial after stem (given stride/pool)
+            resnet.maxpool,  # /4 spatial after stem (given stride/pool)
         )
         self.features = nn.Sequential(
-            stem,           # -> [N, 64, H/4, W/4] roughly
+            stem,  # -> [N, 64, H/4, W/4] roughly
             resnet.layer1,  # -> [N, 64, ...]
             resnet.layer2,  # -> [N, 128, ...]
         )
@@ -1056,9 +1129,9 @@ class ResNet18Layer2(Encoder):
 
         # --- ImageNet per-channel mean/std (for Normalize-like behavior)
         mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32)[:, None, None]
-        std  = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32)[:, None, None]
+        std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32)[:, None, None]
         self.register_buffer("mn_mean", mean)
-        self.register_buffer("mn_std",  std)
+        self.register_buffer("mn_std", std)
 
         # --- Compute encoder_out_size dynamically from obs_space
         _, H, W = obs_space.shape
@@ -1077,8 +1150,8 @@ class ResNet18Layer2(Encoder):
         # If upstream obs are raw [0,1], this matches ImageNet normalization.
         # If upstream obs are already zero-mean/unit-std, consider disabling that upstream norm.
         x = (x - self.mn_mean) / self.mn_std
-        x = self.features(x)      # [N, 128, H', W']
-        x = self.downsample(x)    # [N, 128, H'', W'']
+        x = self.features(x)  # [N, 128, H', W']
+        x = self.downsample(x)  # [N, 128, H'', W'']
         return torch.flatten(x, 1)
 
     def get_out_size(self) -> int:
@@ -1089,19 +1162,21 @@ import cv2
 import numpy as np
 import torch.nn.functional as F
 
+
 class RandomGaborEncoder(Encoder):
     """
     Visual encoder that begins with a frozen bank of Gabor filters (randomized orientations
     and scales), followed by a small stack of learnable convolutions to detect geometric
     compositions (e.g. walls, corners) in DeepMind Lab scenes.
     """
+
     def __init__(self, cfg, obs_space, pretrained=False, fixed=True):
         super().__init__(cfg)
         in_ch = obs_space.shape[0]
         # -- Gabor bank parameters (can be overridden via cfg) --
-        num_scales = getattr(cfg, 'gabor_scales', 3)
-        num_orient = getattr(cfg, 'gabor_orientations', 8)
-        ksize = getattr(cfg, 'gabor_kernel_size', 21)
+        num_scales = getattr(cfg, "gabor_scales", 3)
+        num_orient = getattr(cfg, "gabor_orientations", 8)
+        ksize = getattr(cfg, "gabor_kernel_size", 21)
         # build frequency & orientation lists
         freqs = np.linspace(0.05, 0.4, num_scales)
         thetas = np.linspace(0, np.pi, num_orient, endpoint=False)
@@ -1112,37 +1187,31 @@ class RandomGaborEncoder(Encoder):
         for freq in freqs:
             for theta in thetas:
                 kern = cv2.getGaborKernel(
-                    ksize=(ksize, ksize),
-                    sigma=ksize/6.0,
-                    theta=theta,
-                    lambd=ksize/(2.0*freq),
-                    gamma=0.5,
-                    psi=0
+                    ksize=(ksize, ksize), sigma=ksize / 6.0, theta=theta, lambd=ksize / (2.0 * freq), gamma=0.5, psi=0
                 ).astype(np.float32)
                 kernels.append(kern)
-        bank = np.stack(kernels, axis=0)                   # [K, H, W]
-        bank = bank[:, None, :, :]                         # [K,1,H,W]
-        bank = np.repeat(bank, in_ch, axis=1)              # [K,in_ch,H,W]
+        bank = np.stack(kernels, axis=0)  # [K, H, W]
+        bank = bank[:, None, :, :]  # [K,1,H,W]
+        bank = np.repeat(bank, in_ch, axis=1)  # [K,in_ch,H,W]
         # define frozen conv with Gabor weights
-        self.gabor_conv = nn.Conv2d(
-            in_ch, self.num_gabor,
-            kernel_size=ksize, padding=ksize//2, bias=False
-        )
+        self.gabor_conv = nn.Conv2d(in_ch, self.num_gabor, kernel_size=ksize, padding=ksize // 2, bias=False)
         with torch.no_grad():
             self.gabor_conv.weight.copy_(torch.from_numpy(bank))
-        for p in self.gabor_conv.parameters(): p.requires_grad = False
+        for p in self.gabor_conv.parameters():
+            p.requires_grad = False
 
         # -- Learnable convolutional stack to compose shape features --
-        mid_ch = getattr(cfg, 'gabor_mid_channels', 16)
+        mid_ch = getattr(cfg, "gabor_mid_channels", 16)
         self.conv_stack = nn.Sequential(
             nn.Conv2d(self.num_gabor, mid_ch, stride=2, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(mid_ch, mid_ch, stride=2, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
         )
         # optionally freeze or fine-tune
         if fixed:
-            for p in self.conv_stack.parameters(): p.requires_grad = False
+            for p in self.conv_stack.parameters():
+                p.requires_grad = False
         # global pooling
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.downsample = nn.AvgPool2d(kernel_size=3, stride=2, padding=1)
@@ -1153,10 +1222,10 @@ class RandomGaborEncoder(Encoder):
         #     self.conv_stack
         # )
         # self.conv_head_out_size = calc_num_elements(self.measure, obs_space.shape)
-        self.encoder_out_size   = mid_ch * (96//8)*(72//8)  # assuming input is 96x72, adjust if different
+        self.encoder_out_size = mid_ch * (96 // 8) * (72 // 8)  # assuming input is 96x72, adjust if different
 
         # move to device
-        device = 'cuda' if getattr(cfg, 'device','').lower() in ('cuda','gpu') else 'cpu'
+        device = "cuda" if getattr(cfg, "device", "").lower() in ("cuda", "gpu") else "cpu"
         self.model_to_device(device)
 
     def forward(self, x):
@@ -1172,8 +1241,6 @@ class RandomGaborEncoder(Encoder):
 
     def get_out_size(self):
         return self.encoder_out_size
-
-
 
 
 def make_img_encoder(cfg: Config, obs_space: ObsSpace) -> Encoder:
@@ -1236,43 +1303,44 @@ def make_hipposlam_encoder(cfg: Config, obs_space: ObsSpace) -> Encoder:
         return DmlabEncoder(cfg, obs_space)
     return HipposlamEncoder(cfg, obs_space)
 
+
 ### 31.08.26 TO PREVIOUSLY
- 
-        # ## ADDED, MODULATION CONDITIONS, TO DO: ADD REWARD_INPUT ##
-        # if self.DG_context_mod != "None" or self.Decoder_context_mod != "None": # UNTIL 31.08.26 THESE CONDITIONS DIDN'T HAVE CONTEXT CONCATENATION TO ENCODER OUTPUT, SO CONTEXT DOESN'T ENTER CORE/DECODER OR BE PART OF BYPASS
-        #     embedded_instr = self.instruction_embed_layer(last_outputs)
-        #     x = torch.cat((x, last_outputs), dim=1) # ADDED ON 31.08.26, context be a part of encoder output SO THEY CAN GET BYPASSED TO DECODER OR BE PART OF CORE
-        #     if self.DG_context_mod == "multiply":
-        #         tmp_out = self.DG_projection(x, context=embedded_instr) # ADD FLAG TO DGProjection_batchnorm_relu(nn.Module)
-        #     elif self.DG_context_mod == "sigmoid":
-        #         embedded_instr = torch.sigmoid(embedded_instr) # Apply sigmoid to the instruction embedding
-        #         tmp_out = self.DG_projection(x) * embedded_instr # Post-projection gating
-        # else:
-        #     if self.Decoder_context_mod == "None":
-        #         x = torch.cat((x, last_outputs), dim=1) ## Default concatenation of instructions to visual features ## WHEN BYPASS THEY DONT GO TO CORE BUT DIRECTLY TO DECODER 
-        #     tmp_out = self.DG_projection(x)
-        # #######
 
-        # # log.info(tmp_out) 
+# ## ADDED, MODULATION CONDITIONS, TO DO: ADD REWARD_INPUT ##
+# if self.DG_context_mod != "None" or self.Decoder_context_mod != "None": # UNTIL 31.08.26 THESE CONDITIONS DIDN'T HAVE CONTEXT CONCATENATION TO ENCODER OUTPUT, SO CONTEXT DOESN'T ENTER CORE/DECODER OR BE PART OF BYPASS
+#     embedded_instr = self.instruction_embed_layer(last_outputs)
+#     x = torch.cat((x, last_outputs), dim=1) # ADDED ON 31.08.26, context be a part of encoder output SO THEY CAN GET BYPASSED TO DECODER OR BE PART OF CORE
+#     if self.DG_context_mod == "multiply":
+#         tmp_out = self.DG_projection(x, context=embedded_instr) # ADD FLAG TO DGProjection_batchnorm_relu(nn.Module)
+#     elif self.DG_context_mod == "sigmoid":
+#         embedded_instr = torch.sigmoid(embedded_instr) # Apply sigmoid to the instruction embedding
+#         tmp_out = self.DG_projection(x) * embedded_instr # Post-projection gating
+# else:
+#     if self.Decoder_context_mod == "None":
+#         x = torch.cat((x, last_outputs), dim=1) ## Default concatenation of instructions to visual features ## WHEN BYPASS THEY DONT GO TO CORE BUT DIRECTLY TO DECODER
+#     tmp_out = self.DG_projection(x)
+# #######
 
-        # if self.depth_sensor:
-        #    depth_out = self.depth_encoder(obs_dict["obs"][:, -1:, :, :])
-        #    depth_out = depth_out.view(obs_dict["obs"].size(0), -1)
-        #    bypass_out = torch.cat((depth_out, last_outputs), dim=1)
-        # else:
-        #    bypass_out = x
+# # log.info(tmp_out)
 
-        # if self.bypass:
-        #     tmp_out = torch.cat((tmp_out, bypass_out), dim=1)
-        # elif hasattr(self, "dense"):
-        #     dense_out = self.dense(x)
-        #     tmp_out = torch.cat((tmp_out, dense_out), dim=1)
-        # return tmp_out
+# if self.depth_sensor:
+#    depth_out = self.depth_encoder(obs_dict["obs"][:, -1:, :, :])
+#    depth_out = depth_out.view(obs_dict["obs"].size(0), -1)
+#    bypass_out = torch.cat((depth_out, last_outputs), dim=1)
+# else:
+#    bypass_out = x
 
-        # #log.debug(
-        # #    f"Encoder output shape: {tmp_out.shape}, "
-        # #    f"encoder_out_size: {self.encoder_out_size}, "
-        # #    f"bypass enabled: {self.bypass}, "
-        # #    f"depth_sensor: {self.depth_sensor}"
-        # #)
-        # #return tmp_out
+# if self.bypass:
+#     tmp_out = torch.cat((tmp_out, bypass_out), dim=1)
+# elif hasattr(self, "dense"):
+#     dense_out = self.dense(x)
+#     tmp_out = torch.cat((tmp_out, dense_out), dim=1)
+# return tmp_out
+
+# #log.debug(
+# #    f"Encoder output shape: {tmp_out.shape}, "
+# #    f"encoder_out_size: {self.encoder_out_size}, "
+# #    f"bypass enabled: {self.bypass}, "
+# #    f"depth_sensor: {self.depth_sensor}"
+# #)
+# #return tmp_out

@@ -8,12 +8,23 @@ from torch import Tensor, nn
 from sample_factory.model.core import ModelCore, ModelCoreIdentity, ModelCoreRNN
 from sample_factory.utils.typing import Config
 from sample_factory.utils.utils import log
+from sf_working_directories.zeynep.dmlab.custom_contextRNN import (  # to wrap any core with context inference module
+    ContextRNN,
+)
+from sf_working_directories.zeynep.dmlab.custom_highlevelRNN import (
+    HighLevelContextRNN_Learner,
+    HighLevelContextRNN_Policy,
+    HighLevelContextRNN_QLearning,
+    HighLevelContextRNN_Stage1,
+    compute_log_dict,
+    high_level_policy_loss,
+    q_loss,
+)
 
-from sf_working_directories.zeynep.dmlab.custom_weights_DGFeedback import generate_shift_register_weights
-#from sf_working_directories.zeynep.dmlab.custom_rnn_DGFeedback import CustomRNN
+# from sf_working_directories.zeynep.dmlab.custom_rnn_DGFeedback import CustomRNN
 from sf_working_directories.zeynep.dmlab.custom_rnn_boundedfeedback import CustomRNN
-from sf_working_directories.zeynep.dmlab.custom_contextRNN import ContextRNN # to wrap any core with context inference module
-from sf_working_directories.zeynep.dmlab.custom_highlevelRNN import HighLevelContextRNN_Stage1, HighLevelContextRNN_QLearning, q_loss, HighLevelContextRNN_Policy, high_level_policy_loss, HighLevelContextRNN_Learner, compute_log_dict
+from sf_working_directories.zeynep.dmlab.custom_weights_DGFeedback import generate_shift_register_weights
+
 
 class FixedRNNSequenceCore(ModelCore):
     def __init__(self, cfg, input_size):
@@ -74,7 +85,7 @@ class FixedRNNSequenceCore(ModelCore):
         # Freeze the weights so that they are not updated during training.
         for param in self.rnn.parameters():
             param.requires_grad = False
-        
+
     def forward(self, head_output, rnn_states):
         """
         Args:
@@ -260,40 +271,41 @@ class FixedRNNWithBypassCore(ModelCore):
 
             return concat_output, concat_hidden
 
+
 ### ADDED ###
 class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
     def __init__(self, cfg, input_size):
         super().__init__(cfg)
-        self.R = getattr(cfg, "Hippo_R", 8) # initial register length that recieves current DG feature
-        self.L = getattr(cfg, "Hippo_L", 48) # memory related length param
-        self.Hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64) # number of DG channels
+        self.R = getattr(cfg, "Hippo_R", 8)  # initial register length that recieves current DG feature
+        self.L = getattr(cfg, "Hippo_L", 48)  # memory related length param
+        self.Hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64)  # number of DG channels
 
         if input_size < self.Hippo_n_feature:
             raise Warning(f"Input size {input_size} must be at least Hippo_n_feature ({self.Hippo_n_feature})")
-        
+
         self.bypass_size = input_size - self.Hippo_n_feature
         log.debug(f"bypass size: {self.bypass_size}")
 
         # The total register length.
         self.expanded_length = self.R + self.L - 1  # number of CA3 register slots for each feature
         # The flattened hidden state dimension (RNN core output).
-        self.n_feature = self.Hippo_n_feature # number of DG feature channels that CA3 recieves
-        self.hidden_size = self.n_feature * self.expanded_length # CA3 recurrent state
-        #self.core_output_size = self.Hippo_n_feature * self.expanded_length + self.bypass_size
+        self.n_feature = self.Hippo_n_feature  # number of DG feature channels that CA3 recieves
+        self.hidden_size = self.n_feature * self.expanded_length  # CA3 recurrent state
+        # self.core_output_size = self.Hippo_n_feature * self.expanded_length + self.bypass_size
 
         ## instead use this:
-        self.core_output_size = self.hidden_size # CA3 only hidden states
-        self.total_output_size = self.hidden_size + self.bypass_size # full output given to decoder
+        self.core_output_size = self.hidden_size  # CA3 only hidden states
+        self.total_output_size = self.hidden_size + self.bypass_size  # full output given to decoder
 
         # Create an RNN with ReLU activation.
         # It has fixed W_in and W_hh buffers, and one learned parameter:
         # lr_row = W_feedback.
         self.rnn = CustomRNN(
-            input_size=self.n_feature, # DG Feature vector (B, n_feature)
-            hidden_size=self.hidden_size, # CA3 shift-register memory (B, hidden_size)
+            input_size=self.n_feature,  # DG Feature vector (B, n_feature)
+            hidden_size=self.hidden_size,  # CA3 shift-register memory (B, hidden_size)
             num_layers=1,
             nonlinearity="relu",
-            rank=self.n_feature, # LoRA rank for the feedback matrix W_feedback
+            rank=self.n_feature,  # LoRA rank for the feedback matrix W_feedback
             batch_first=False,
             bias=False,
         )
@@ -304,7 +316,7 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
             register_length=self.expanded_length,
             injection_width=self.R,
         )
-        
+
         self.rnn.set_fixed_weights(W_in, W_hh)
 
         # log.debug(f"weights: { W_ih, W_hh}")
@@ -314,7 +326,7 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
             "W_hh_eff = W_hh + W_in @ W_feedback; "
             f"feedback parameters={self.rnn.lr_row.numel()}"
         )
-    
+
     def forward(self, head_output, rnn_states):
         """
         Args:
@@ -330,9 +342,11 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
 
         if isinstance(head_output, PackedSequence):
             # Concatenate along the feature dimension.
-            dg_data = head_output.data[:, :self.n_feature] # DG forward representation 
-            bypass_data = head_output.data[:, self.n_feature:] if self.bypass_size > 0 else None # Features that bypass CA3
-            
+            dg_data = head_output.data[:, : self.n_feature]  # DG forward representation
+            bypass_data = (
+                head_output.data[:, self.n_feature :] if self.bypass_size > 0 else None
+            )  # Features that bypass CA3
+
             # Packed DG input for CA3 RNN
             dg_packed = PackedSequence(
                 dg_data,
@@ -342,10 +356,13 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
             )
 
             ca3_output_packed, new_hidden = self.rnn(dg_packed, h0)
-            new_hidden = new_hidden.squeeze(0) # Final CA3 hidden state after processing the sequence
+            new_hidden = new_hidden.squeeze(0)  # Final CA3 hidden state after processing the sequence
 
             if bypass_data is not None:
-                concatenated_data = torch.cat([ca3_output_packed.data, bypass_data], dim=1,)
+                concatenated_data = torch.cat(
+                    [ca3_output_packed.data, bypass_data],
+                    dim=1,
+                )
 
                 bypass_data_packed = PackedSequence(
                     bypass_data,
@@ -354,12 +371,22 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
                     head_output.unsorted_indices,
                 )
                 # Assume 'packed' is your PackedSequence and you used batch_first=True when packing.
-                padded, lengths = pad_packed_sequence(bypass_data_packed, batch_first=True,)
+                padded, lengths = pad_packed_sequence(
+                    bypass_data_packed,
+                    batch_first=True,
+                )
 
                 # For each sequence in the batch, pick the last valid time step.
                 # lengths is a tensor of the original sequence lengths.
-                last_inputs = padded[torch.arange(padded.size(0), device=padded.device), lengths - 1, :,]
-                concatenated_data_hidden = torch.cat([new_hidden, last_inputs], dim=1,)
+                last_inputs = padded[
+                    torch.arange(padded.size(0), device=padded.device),
+                    lengths - 1,
+                    :,
+                ]
+                concatenated_data_hidden = torch.cat(
+                    [new_hidden, last_inputs],
+                    dim=1,
+                )
 
             else:
                 concatenated_data = ca3_output_packed.data
@@ -372,7 +399,7 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
                 ca3_output_packed.unsorted_indices,
             )
 
-            # Preserve the original return convention 
+            # Preserve the original return convention
             concat_hidden = PackedSequence(
                 concatenated_data_hidden,
                 ca3_output_packed.batch_sizes,
@@ -384,15 +411,15 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
         else:
             # For Tensor input.
             # Split the input into RNN and bypass parts.
-            dg_input = head_output[:, :self.n_feature]  # shape: (B, n_feature)
-            bypass_output = head_output[:, self.n_feature:] if self.bypass_size > 0 else None
-            
+            dg_input = head_output[:, : self.n_feature]  # shape: (B, n_feature)
+            bypass_output = head_output[:, self.n_feature :] if self.bypass_size > 0 else None
+
             # Add sequence dimension for the RNN.
             dg_input = dg_input.unsqueeze(0)  # shape: (1, B, n_feature)
             ca3_output, new_hidden = self.rnn(dg_input, h0)
-            new_hidden = new_hidden.squeeze(0)   # shape: (B, core_output_size)
-            ca3_output = ca3_output.squeeze(0)     # shape: (B, core_output_size)
-            
+            new_hidden = new_hidden.squeeze(0)  # shape: (B, core_output_size)
+            ca3_output = ca3_output.squeeze(0)  # shape: (B, core_output_size)
+
             # Concatenate the RNN output with bypass features.
             if bypass_output is not None:
                 concat_output = torch.cat([ca3_output, bypass_output], dim=1)
@@ -401,7 +428,7 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
                 concat_output = ca3_output
 
                 concat_hidden = new_hidden
-            
+
             return concat_output, concat_hidden
 
     def get_out_size(self) -> int:
@@ -411,14 +438,16 @@ class FixedRNNWithBypassCoreDGFeedbackLORA(ModelCore):
     def summaries(self):
         return self.rnn.summaries()
 
+
 class ContextRNNWrapperCore(ModelCore):
     """
     Wraps any existing core (e.g. BypassSS) and adds ContextRNN with explicit value decay.
     Leaves the base core completely untouched by calling it step-by-step during training.
     """
+
     def __init__(self, cfg, input_size):
         super().__init__(cfg)
-        
+
         # 1. Instantiate the existing core
         # Make sure to import SimpleSequenceWithBypassCore if not already imported
         # Dimensions from the base core
@@ -430,11 +459,11 @@ class ContextRNNWrapperCore(ModelCore):
         log.warn("USING CONTEXTRNN WRAPPER")
         self.base_core_output_size = self.base_core.total_output_size
         self.ca3_output_size = self.base_core.core_output_size
-        
+
         # 2. Instantiate the ContextRNN addition
         self.context_hidden_size = getattr(cfg, "context_hidden_size", 6)
         self.decoder_context_dim = getattr(cfg, "decoder_context_dim", 6)
-        
+
         self.context_rnn = ContextRNN(
             ca3_dim=self.ca3_output_size,
             dg_dim=self.Hippo_n_feature,
@@ -444,12 +473,12 @@ class ContextRNNWrapperCore(ModelCore):
             initial_decay=getattr(cfg, "context_decay", 0.95),
             learn_decay=getattr(cfg, "learn_decay", True),
         )
-        
+
         # Variables exposed for WandB logging:
         self.last_v_L = 0.0
         self.last_v_R = 0.0
         self.last_v_diff = 0.0
-        
+
         # Total recurrent state: base core's states + 2 (v_prev) + ContextRNN hidden + dg_gate
         self.total_state_size = (
             self.base_core.total_output_size
@@ -457,7 +486,7 @@ class ContextRNNWrapperCore(ModelCore):
             + self.context_hidden_size
             + self.Hippo_n_feature
         )
-        
+
         # Total output fed to the Decoder: base core output + decoder_context
         self.total_output_size = self.base_core_output_size + self.decoder_context_dim
 
@@ -474,7 +503,7 @@ class ContextRNNWrapperCore(ModelCore):
 
         base_sz = self.base_core_output_size
         ctx_sz = self.context_hidden_size
-        
+
         base_states = rnn_states[:, :base_sz]
         v_prev = rnn_states[:, base_sz : base_sz + 2]
         h_ctx_prev = rnn_states[:, base_sz + 2 : base_sz + 2 + ctx_sz]
@@ -482,12 +511,14 @@ class ContextRNNWrapperCore(ModelCore):
 
         if not is_bptt:
             # === INFERENCE PASS ===
-            # get the raw features from encoder, and get the previous step's dg_gate. Then modulate the current DG features and pass to base core. 
+            # get the raw features from encoder, and get the previous step's dg_gate. Then modulate the current DG features and pass to base core.
             if getattr(self, "dg_strength", 0.0) > 0:
-                modulated_dg = head_output[:, :self.Hippo_n_feature] * (1.0 + dg_gate_prev) # if <1 DG feature is suppressed, if >1 DG feature is amplified
+                modulated_dg = head_output[:, : self.Hippo_n_feature] * (
+                    1.0 + dg_gate_prev
+                )  # if <1 DG feature is suppressed, if >1 DG feature is amplified
             else:
-                modulated_dg = head_output[:, :self.Hippo_n_feature] 
-            
+                modulated_dg = head_output[:, : self.Hippo_n_feature]
+
             if self.use_reward:
                 # Strip the reward so it doesn't bypass to decoder
                 unmodulated_rest = head_output[:, self.Hippo_n_feature : -1]
@@ -496,20 +527,17 @@ class ContextRNNWrapperCore(ModelCore):
                 unmodulated_rest = head_output[:, self.Hippo_n_feature :]
                 reward_pulse = torch.zeros(head_output.shape[0], 1, device=head_output.device)
 
-            head_in = torch.cat([modulated_dg, unmodulated_rest], dim=-1) # get the new modulated DG features
+            head_in = torch.cat([modulated_dg, unmodulated_rest], dim=-1)  # get the new modulated DG features
 
-            base_out, base_states_new = self.base_core(head_in, base_states) # feed newly modulated features into actual CA3 core
+            base_out, base_states_new = self.base_core(
+                head_in, base_states
+            )  # feed newly modulated features into actual CA3 core
 
             # Slice base_out to get only the CA3 features (1136)
-            ca3_features = base_out[:, :self.ca3_output_size]
+            ca3_features = base_out[:, : self.ca3_output_size]
 
             # dg_gate_next:get the dg_gate for next time step and save it to recurrent memory
-            dec_ctx, dg_gate_next, v_new, h_ctx_next = self.context_rnn(
-                reward_pulse,
-                ca3_features,
-                v_prev,
-                h_ctx_prev
-            )
+            dec_ctx, dg_gate_next, v_new, h_ctx_next = self.context_rnn(reward_pulse, ca3_features, v_prev, h_ctx_prev)
 
             with torch.no_grad():
                 self.last_v_L = v_new[:, 0].mean().item()
@@ -517,7 +545,7 @@ class ContextRNNWrapperCore(ModelCore):
                 self.last_v_diff = (v_new[:, 0] - v_new[:, 1]).abs().mean().item()
 
             new_rnn_states = torch.cat([base_states_new, v_new, h_ctx_next, dg_gate_next], dim=-1)
-            out_total = torch.cat([base_out, dec_ctx], dim=-1) # Concatanate context with CA3 output
+            out_total = torch.cat([base_out, dec_ctx], dim=-1)  # Concatanate context with CA3 output
 
             # Pack it back if it was packed
             if is_packed:
@@ -528,19 +556,19 @@ class ContextRNNWrapperCore(ModelCore):
         else:
             # === BPTT PASS ===
             T, B = head_output.shape[:2]
-            
+
             v_prev_t = v_prev
             h_ctx_prev_t = h_ctx_prev
             dg_gate_prev_t = dg_gate_prev
             base_states_t = base_states
 
             out_total_list = []
-            
+
             for t in range(T):
                 if getattr(self, "dg_strength", 0.0) > 0:
-                    modulated_dg_t = head_output[t, :, :self.Hippo_n_feature] * (1.0 + dg_gate_prev_t)
+                    modulated_dg_t = head_output[t, :, : self.Hippo_n_feature] * (1.0 + dg_gate_prev_t)
                 else:
-                    modulated_dg_t = head_output[t, :, :self.Hippo_n_feature]
+                    modulated_dg_t = head_output[t, :, : self.Hippo_n_feature]
 
                 if self.use_reward:
                     # Strip the reward so it doesn't bypass to decoder
@@ -555,12 +583,9 @@ class ContextRNNWrapperCore(ModelCore):
                 base_out_t, base_states_t = self.base_core(head_in_t, base_states_t)
 
                 # Slice base_out_t to get only the CA3 features, the rest is depth
-                ca3_features_t = base_out_t[:, :self.ca3_output_size]
+                ca3_features_t = base_out_t[:, : self.ca3_output_size]
                 dec_ctx_t, dg_gate_prev_t, v_prev_t, h_ctx_prev_t = self.context_rnn(
-                    reward_pulse_t,
-                    ca3_features_t,
-                    v_prev_t,
-                    h_ctx_prev_t
+                    reward_pulse_t, ca3_features_t, v_prev_t, h_ctx_prev_t
                 )
 
                 out_total_t = torch.cat([base_out_t, dec_ctx_t], dim=-1)
@@ -579,7 +604,8 @@ class ContextRNNWrapperCore(ModelCore):
                 out_total_seq = nn.utils.rnn.pack_padded_sequence(out_total_seq, lengths, enforce_sorted=False)
 
             return out_total_seq, new_rnn_states
-        
+
+
 #### FOR THE FIRST HLRNN CORE WRAPPER THAT HANDELED STAGE1 AND ONLY Q LEARNING CHECK wrappers/separate_HLcorewrapper.py (02.10.26)
 class HighLevelRNNWrapperCore(ModelCore):
     """
@@ -587,41 +613,66 @@ class HighLevelRNNWrapperCore(ModelCore):
     Record the last N completed trials and use them to update the high-level state for the next trial.
     The high-level state is used to produce a distribution over the K possible modes for the next trial.
     """
+
     def __init__(self, cfg, input_size):
         super().__init__(cfg)
         self.cfg = cfg
         self.K = getattr(cfg, "hl_K", 4)
         self.d_H = getattr(cfg, "hl_d_H", 16)
-        self.history_len = getattr(cfg, "hl_history_len", 8) # get the last 8 completed trials to update the high-level state
+        self.history_len = getattr(
+            cfg, "hl_history_len", 8
+        )  # get the last 8 completed trials to update the high-level state
         if self.history_len < 1:
             raise ValueError("hl_history_len must be at least one completed trial")
-        self.event_width = self.d_H + self.K + 2  # pre-event h, chosen z, reward, valid flag
+
+        self.representations = getattr(cfg, "hl_representations", False)
+        self.decoder = None
+
+        self.d_rep = getattr(cfg, "hl_d_rep", 64)
+
+        if self.representations:
+            self.event_width = (
+                self.d_H + self.K + 2 + (2 * self.d_rep)
+            )  # pre-event h, chosen z, reward, valid flag = 16 + 2 + 2 + 128 = 148
+        else:
+            self.event_width = self.d_H + self.K + 2  # pre-event h, chosen z, reward, valid flag
+
         self.history_size = self.history_len * self.event_width
         self.oracle = getattr(cfg, "oracle_context", False)
-        
+
         # NEW: Check if we are doing Policy Gradient or Q-Learning
         self.is_policy = getattr(cfg, "hl_is_policy", False)
-        
-        base_input_size = input_size - 3 
+
+        base_input_size = input_size - 4
         if self.oracle:
-            base_input_size -= 1  
-            
+            base_input_size -= 1
+
         self.base_core = SimpleSequenceWithBypassCore(cfg, input_size=base_input_size)
         self.base_state_size = self.base_core.total_output_size
-        self.history_start = self.base_state_size + self.d_H
-        
+
+        self.rep_size = (2 * self.d_rep) if self.representations else 0
+        self.history_start = self.base_state_size + self.d_H + self.rep_size
+        self.total_state_size = self.base_state_size + self.d_H + self.rep_size + self.history_size + self.K
+        # self.history_start = self.base_state_size + self.d_H
+
         self.high_level_rnn_stage1 = HighLevelContextRNN_Stage1(K=self.K, d_H=self.d_H)
-        
+
         # Unified Learner RNN!
         hl_tau = getattr(cfg, "hl_tau", 1.0)
         if hl_tau <= 0:
             raise ValueError("hl_tau must be positive")
-        self.hl_learner = HighLevelContextRNN_Learner(
-            K=self.K, d_H=self.d_H, tau=hl_tau, is_policy=self.is_policy,
-            deterministic=getattr(cfg, "hl_deterministic", False),
-        ) 
 
-        self.total_state_size = self.base_state_size + self.d_H + self.history_size + self.K
+        self.hl_learner = HighLevelContextRNN_Learner(
+            K=self.K,
+            d_H=self.d_H,
+            tau=hl_tau,
+            is_policy=self.is_policy,
+            deterministic=getattr(cfg, "hl_deterministic", False),
+            representations=self.representations,
+            d_rep=self.d_rep,
+        )
+
+        # self.total_state_size = self.base_state_size + self.d_H + self.history_size + self.K
         self.total_output_size = self.base_core.total_output_size + self.K
         configured_size = getattr(cfg, "rnn_size", None)
         if configured_size is not None and configured_size != self.total_state_size:
@@ -633,33 +684,79 @@ class HighLevelRNNWrapperCore(ModelCore):
 
     def get_core_state_size(self):
         return self.total_state_size
-        
+
     def get_out_size(self):
         return self.total_output_size
 
-    def append_event(self, history, h_before, z_before, reward, event_mask):
+    def set_decoder(self, decoder):
+        self.decoder = decoder
+
+    def append_event(
+        self, history, h_before, z_before, reward, event_mask, e_trigger: Tensor = None, e_outcome: Tensor = None
+    ):
         """Keep completed trials for learner unrolling; this is not a policy input."""
-        entry = torch.cat((h_before.detach(), z_before.detach(), reward[:, None],
-                           torch.ones_like(reward[:, None])), dim=-1)
-        shifted = torch.cat((history[:, self.event_width:], entry), dim=-1) # Shift history to the left and append new entry
+        valid_flag = torch.ones_like(reward[:, None])
+
+        if self.representations:
+            if e_trigger is None or e_outcome is None:
+                raise ValueError("e_trigger and e_outcome must be provided when representations are enabled")
+            entry = torch.cat(
+                (
+                    h_before.detach(),
+                    z_before.detach(),
+                    reward[:, None],
+                    e_trigger.detach(),
+                    e_outcome.detach(),
+                    valid_flag,
+                ),
+                dim=-1,
+            )
+        else:
+            entry = torch.cat((h_before.detach(), z_before.detach(), reward[:, None], valid_flag), dim=-1)
+
+        shifted = torch.cat(
+            (history[:, self.event_width :], entry), dim=-1
+        )  # Shift history to the left and append new entry
         valid_outcome = event_mask & (z_before.sum(dim=-1) > 0.5)
-        return torch.where(valid_outcome[:, None], shifted, history) # Return the updated history, only if the outcome is valid
+
+        return torch.where(
+            valid_outcome[:, None], shifted, history
+        )  # Return the updated history, only if the outcome is valid
 
     def scores_from_history(self, history, fallback_h):
         """Rebuild the decision state through past trial events under current weights.
-           When a trial ends, it rewinds to the oldest saved trial in the backpack and fast-forward through history to calculate exact Q-values."""
-        events = history.reshape(-1, self.history_len, self.event_width) # reshape to 3D tensor: (batch, history_len, event_width)
-        valid = events[:, :, -1] > 0.5 # get the events that are actual trials (valid flag)
-        first = valid.int().argmax(dim=1) # first ever trial
+        When a trial ends, it rewinds to the oldest saved trial in the backpack and fast-forward through history to calculate exact Q-values.
+        """
+        events = history.reshape(
+            -1, self.history_len, self.event_width
+        )  # reshape to 3D tensor: (batch, history_len, event_width)
+        valid = events[:, :, -1] > 0.5  # get the events that are actual trials (valid flag)
+        first = valid.int().argmax(dim=1)  # first ever trial
         batch = torch.arange(events.size(0), device=events.device)
-        h = torch.where(valid.any(dim=1, keepdim=True), 
-                        events[batch, first, :self.d_H], fallback_h) # use the first valid trial's h as the starting point, or fallback_h if no valid trials
+        h = torch.where(
+            valid.any(dim=1, keepdim=True), events[batch, first, : self.d_H], fallback_h
+        )  # use the first valid trial's h as the starting point, or fallback_h if no valid trials
+
         for k in range(self.history_len):
             event = events[:, k]
-            z = event[:, self.d_H:self.d_H + self.K]
+            z = event[:, self.d_H : self.d_H + self.K]
             reward = event[:, self.d_H + self.K]
-            h = self.hl_learner.update_state(valid[:, k], reward, h, z) # step HLRNN forward one trial at a time, using the saved z and reward from history
-        return self.hl_learner.head(h) # Calculate current Q-values for the current frame.
+            if self.representations:
+                # Unpack two 64-dim landmark representations, slice from the event tensor
+                trig_start = self.d_H + self.K + 1
+                trig_end = trig_start + self.d_rep
+                out_end = trig_end + self.d_rep
+                e_trigger = event[:, trig_start:trig_end]  # the next 64 numbers are the trigger representation
+                e_outcome = event[:, trig_end:out_end]  # the next 64 numbers are the outcome representation
+
+                h = self.hl_learner.update_state(
+                    valid[:, k], reward, h, z, e_trigger, e_outcome
+                )  # step HLRNN forward one trial at a time, using the saved z and reward from history
+            else:
+                h = self.hl_learner.update_state(
+                    valid[:, k], reward, h, z
+                )  # step HLRNN forward one trial at a time, using the saved z and reward from history
+        return self.hl_learner.head(h)  # Calculate current Q-values for the current frame.
 
     def forward(self, head_output, rnn_states):
         is_packed = isinstance(head_output, PackedSequence)
@@ -668,17 +765,28 @@ class HighLevelRNNWrapperCore(ModelCore):
 
         is_bptt = head_output.dim() == 3
 
-        base_states = rnn_states[:, :self.base_state_size]
+        base_states = rnn_states[:, : self.base_state_size]
         h_high_prev = rnn_states[:, self.base_state_size : self.base_state_size + self.d_H]
-        history_prev = rnn_states[:, self.history_start:self.history_start + self.history_size]
-        z_prev = rnn_states[:, -self.K:]
+
+        if self.representations:
+            trig_idx = self.base_state_size + self.d_H
+            out_idx = trig_idx + self.d_rep
+            e_trig_prev = rnn_states[:, trig_idx:out_idx]
+            e_out_prev = rnn_states[:, out_idx : out_idx + self.d_rep]
+        else:
+            e_trig_prev = None
+            e_out_prev = None
+
+        history_prev = rnn_states[:, self.history_start : self.history_start + self.history_size]
+        z_prev = rnn_states[:, -self.K :]
 
         if not is_bptt:
             # === INFERENCE PASS ===
             if self.oracle:
-                base_head_output = head_output[:, :-4] 
-                inst_block = head_output[:, -4].long() 
-                chosen_arm = head_output[:, -3].long() 
+                base_head_output = head_output[:, :-4]
+                # didnt add chosen_arm_pulse in encoder, add and fix here
+                inst_block = head_output[:, -4].long()
+                chosen_arm = head_output[:, -3].long()
                 outcome_mask = head_output[:, -2].bool()
                 prev_trial_reward = head_output[:, -1]
 
@@ -686,24 +794,46 @@ class HighLevelRNNWrapperCore(ModelCore):
                     outcome_mask, prev_trial_reward, h_high_prev, z_prev, inst_block
                 )
             else:
-                base_head_output = head_output[:, :-3] 
-                chosen_arm = head_output[:, -3].long() 
+                base_head_output = head_output[:, :-4]
+                chosen_arm_pulse = head_output[:, -4].long()
+                chosen_arm = head_output[:, -3].long()
                 outcome_mask = head_output[:, -2].bool()
                 prev_trial_reward = head_output[:, -1]
 
-                h_high_new, z_new, _, _, _ = self.hl_learner(
-                    outcome_mask, prev_trial_reward, h_high_prev, z_prev, chosen_arm
-                )          
+                if self.representations:
+                    h_high_new, z_new, _, _, _ = self.hl_learner(
+                        outcome_mask, prev_trial_reward, h_high_prev, z_prev, chosen_arm, e_trig_prev, e_out_prev
+                    )
+                    history_new = self.append_event(
+                        history_prev, h_high_prev, z_prev, prev_trial_reward, outcome_mask, e_trig_prev, e_out_prev
+                    )
+                else:
+                    h_high_new, z_new, _, _, _ = self.hl_learner(
+                        outcome_mask, prev_trial_reward, h_high_prev, z_prev, chosen_arm
+                    )
+                    history_new = self.append_event(history_prev, h_high_prev, z_prev, prev_trial_reward, outcome_mask)
 
             base_core_out, base_states_new = self.base_core(base_head_output, base_states)
 
             out_total = torch.cat([base_core_out, z_new], dim=-1)
-            history_new = self.append_event(history_prev, h_high_prev, z_prev,
-                                            prev_trial_reward, outcome_mask)
-            new_rnn_states = torch.cat([base_states_new, h_high_new, history_new, z_new], dim=-1)
+
+            if self.representations:
+                h_dec_1 = self.decoder.mlp[0](
+                    out_total
+                ).detach()  # current representation of the decoder's first layer, used for updating the event representations
+
+                is_endpoint = chosen_arm_pulse > 0
+                e_out_new = torch.where(is_endpoint[:, None], h_dec_1, e_out_prev)
+                e_trig_new = torch.where(outcome_mask[:, None], h_dec_1, e_trig_prev)
+
+                new_rnn_states = torch.cat(
+                    [base_states_new, h_high_new, e_trig_new, e_out_new, history_new, z_new], dim=-1
+                )
+            else:
+                new_rnn_states = torch.cat([base_states_new, h_high_new, history_new, z_new], dim=-1)
 
             self.last_hl_loss = torch.tensor(0.0, device=head_output.device)
-            self.last_log_dict = None  
+            self.last_log_dict = None
             self.last_hl_metrics = {}
 
             if is_packed:
@@ -717,10 +847,12 @@ class HighLevelRNNWrapperCore(ModelCore):
             # Learner._forward_pass appends the actor's selected mode to each
             # timestep. Never sample a new mode while replaying actor actions.
             valid_seq = head_output[:, :, -1].bool()
-            actor_z_seq = head_output[:, :, -(self.K + 1):-1] # sent from mb["hl_z"], the exact mode agent has picked during rollout 
-            actor_history_seq = head_output[:, :, -(self.K + self.history_size + 1):-(self.K + 1)]
-            head_output = head_output[:, :, :-(self.K + self.history_size + 1)]
-            
+            actor_z_seq = head_output[
+                :, :, -(self.K + 1) : -1
+            ]  # sent from mb["hl_z"], the exact mode agent has picked during rollout
+            actor_history_seq = head_output[:, :, -(self.K + self.history_size + 1) : -(self.K + 1)]
+            head_output = head_output[:, :, : -(self.K + self.history_size + 1)]
+
             h_high_t = h_high_prev
             z_t = z_prev
             history_t = history_prev
@@ -733,7 +865,11 @@ class HighLevelRNNWrapperCore(ModelCore):
                 z_indices_seq = []
                 rewards_seq = []
                 mask_seq = []
-            
+
+            if self.representations:
+                e_trig_t = e_trig_prev
+                e_out_t = e_out_prev
+
             for t in range(T):
                 if self.oracle:
                     base_head_output_t = head_output[t, :, :-4]
@@ -745,17 +881,18 @@ class HighLevelRNNWrapperCore(ModelCore):
                         outcome_mask_t, prev_trial_reward_t, h_high_t, z_t, inst_block_t
                     )
                 else:
-                    base_head_output_t = head_output[t, :, :-3]
+                    base_head_output_t = head_output[t, :, :-4]
+                    chosen_arm_pulse_t = head_output[t, :, -4].long()
                     chosen_arm_t = head_output[t, :, -3].long()
                     outcome_mask_t = head_output[t, :, -2].bool()
                     prev_trial_reward_t = head_output[t, :, -1]
 
-                    # 1. Grab Outputs for OLD state 
+                    # 1. Grab Outputs for OLD state
                     if outcome_mask_t.any():
                         outputs_old = self.scores_from_history(actor_history_seq[t], h_high_t)
                     else:
                         outputs_old = head_output.new_zeros(B, self.K)
-                    
+
                     outputs_seq.append(outputs_old)
                     z_indices_seq.append(z_t.argmax(dim=-1))
                     rewards_seq.append(prev_trial_reward_t)
@@ -763,27 +900,51 @@ class HighLevelRNNWrapperCore(ModelCore):
 
                     # 2. Update reward history, then use the actor's mode for
                     # the decoder and for the next event's reward assignment.
-                    history_t = self.append_event(history_t, h_high_t, z_t,
-                                                  prev_trial_reward_t, outcome_mask_t)
-                    h_high_t = self.hl_learner.update_state(
-                        outcome_mask_t, prev_trial_reward_t, h_high_t, z_t
-                    )
-                    z_t = actor_z_seq[t] # overwrite the mode with the actor's actual choice from the past. 
+                    if self.representations:
+                        history_t = self.append_event(
+                            history_t,
+                            h_high_t,
+                            z_t,
+                            prev_trial_reward_t,
+                            outcome_mask_t,
+                            e_trigger=e_trig_t,
+                            e_outcome=e_out_t,
+                        )
+                        h_high_t = self.hl_learner.update_state(
+                            outcome_mask_t, prev_trial_reward_t, h_high_t, z_t, e_trigger=e_trig_t, e_outcome=e_out_t
+                        )
+                    else:
+                        history_t = self.append_event(history_t, h_high_t, z_t, prev_trial_reward_t, outcome_mask_t)
+                        h_high_t = self.hl_learner.update_state(outcome_mask_t, prev_trial_reward_t, h_high_t, z_t)
+
+                    z_t = actor_z_seq[t]  # overwrite the mode with the actor's actual choice from the past.
 
                 base_core_out_t, base_states_t = self.base_core(base_head_output_t, base_states_t)
 
                 out_total_t = torch.cat([base_core_out_t, z_t], dim=-1)
+
+                if self.representations:
+                    h_dec_1_t = self.decoder.mlp[0](out_total_t).detach()
+
+                    is_endpoint_t = chosen_arm_pulse_t > 0
+                    e_out_t = torch.where(is_endpoint_t[:, None], h_dec_1_t, e_out_t)
+                    e_trig_t = torch.where(outcome_mask_t[:, None], h_dec_1_t, e_trig_t)
+
                 out_total_list.append(out_total_t)
 
             out_total_seq = torch.stack(out_total_list, dim=0)
-            new_rnn_states = torch.cat([base_states_t, h_high_t, history_t, z_t], dim=-1)
+
+            if self.representations:
+                new_rnn_states = torch.cat([base_states_t, h_high_t, e_trig_t, e_out_t, history_t, z_t], dim=-1)
+            else:
+                new_rnn_states = torch.cat([base_states_t, h_high_t, history_t, z_t], dim=-1)
 
             # Process Loss ONLY if NOT oracle!
             if not self.oracle:
-                outputs_stacked = torch.stack(outputs_seq, dim=0)       
-                z_indices_stacked = torch.stack(z_indices_seq, dim=0) 
-                rewards_stacked = torch.stack(rewards_seq, dim=0)     
-                mask_stacked = torch.stack(mask_seq, dim=0)           
+                outputs_stacked = torch.stack(outputs_seq, dim=0)
+                z_indices_stacked = torch.stack(z_indices_seq, dim=0)
+                rewards_stacked = torch.stack(rewards_seq, dim=0)
+                mask_stacked = torch.stack(mask_seq, dim=0)
 
                 # --- DYNAMIC LOSS SWITCH ---
                 if self.is_policy:
@@ -792,7 +953,7 @@ class HighLevelRNNWrapperCore(ModelCore):
                         logits=outputs_stacked,
                         z_indices=z_indices_stacked,
                         rewards=rewards_stacked,
-                        decision_mask=mask_stacked
+                        decision_mask=mask_stacked,
                     )
                     self.last_hl_metrics = metrics
                 else:
@@ -801,7 +962,7 @@ class HighLevelRNNWrapperCore(ModelCore):
                         scores=outputs_stacked,
                         z_indices=z_indices_stacked,
                         rewards=rewards_stacked,
-                        decision_mask=mask_stacked
+                        decision_mask=mask_stacked,
                     )
                     self.last_hl_metrics = {}
 
@@ -809,18 +970,29 @@ class HighLevelRNNWrapperCore(ModelCore):
                 # frame reward stream affected by Sample Factory reward_scale.
                 with torch.no_grad():
                     valid_rewards = rewards_stacked[mask_stacked]
-                    self.last_hl_metrics.update({
-                        "hl/valid_outcomes": valid_rewards.numel(), # how many trials actually ended in the batch
-                        "hl/trial_reward_mean": valid_rewards.mean().item() if valid_rewards.numel() else 0.0, # average raw reward from the environment
-                        "hl/trial_reward_abs_max": valid_rewards.abs().max().item() if valid_rewards.numel() else 0.0, # the maximum absolute reward from the environment
-                    })
+                    self.last_hl_metrics.update(
+                        {
+                            "hl/valid_outcomes": valid_rewards.numel(),  # how many trials actually ended in the batch
+                            "hl/trial_reward_mean": (
+                                valid_rewards.mean().item() if valid_rewards.numel() else 0.0
+                            ),  # average raw reward from the environment
+                            "hl/trial_reward_abs_max": (
+                                valid_rewards.abs().max().item() if valid_rewards.numel() else 0.0
+                            ),  # the maximum absolute reward from the environment
+                        }
+                    )
 
                 self.last_hl_loss = total_loss
                 with torch.no_grad():
                     self.last_log_dict = compute_log_dict(
-                        self.hl_learner.head(h_high_t.detach()), z_t.argmax(dim=-1),
-                        h_high_t.detach(), prev_trial_reward_t, self.hl_learner.tau,
-                        chosen_arm_t, K=self.K, is_policy=self.is_policy,
+                        self.hl_learner.head(h_high_t.detach()),
+                        z_t.argmax(dim=-1),
+                        h_high_t.detach(),
+                        prev_trial_reward_t,
+                        self.hl_learner.tau,
+                        chosen_arm_t,
+                        K=self.K,
+                        is_policy=self.is_policy,
                     )
             else:
                 self.last_hl_loss = torch.tensor(0.0, device=head_output.device)
@@ -1025,8 +1197,8 @@ class SimpleSequenceWithBypassCore(ModelCore):
         # Total output dimension when bypass features are concatenated.
         self.total_output_size = self.core_output_size + self.bypass_size
 
-        #DEBUG
-        #log.info(
+        # DEBUG
+        # log.info(
         #    "BYPASS CORE INIT: input_size=%d, core_input=%d, bypass_size=%d, "
         #     "core_output_size=%d, total_output_size=%d",
         #     input_size,
@@ -1151,7 +1323,7 @@ class SimpleSequenceWithBypassCore(ModelCore):
                 out = flat_core
                 new_rnn_state = flat_core
 
-            #DEBUG
+            # DEBUG
             # log.warning(
             #     "BYPASS CORE FORWARD: out=%s new_rnn_state=%s",
             #     tuple(out.shape),
@@ -1162,6 +1334,7 @@ class SimpleSequenceWithBypassCore(ModelCore):
     def get_out_size(self) -> int:
         log.debug(f"get out size called: {self.total_output_size}")
         return self.total_output_size
+
 
 def straight_through_binary(x: Tensor, identity=True):
     x_binary = (x > 0).float()

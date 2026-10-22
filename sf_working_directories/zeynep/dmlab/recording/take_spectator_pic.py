@@ -1,6 +1,7 @@
 import os
-import deepmind_lab
+
 import cv2
+import deepmind_lab
 import numpy as np
 
 # Set headless display for HPC
@@ -10,10 +11,7 @@ level_name = "ymaze_vol3_INSTR"  # or your exact level name
 output_file = "spectator_map.png"
 
 # Request the spectator top-down camera at high resolution (e.g. 1024x1024)
-observations = [
-    "RGB_INTERLEAVED",
-    "DEBUG.CAMERA_INTERLEAVED.TOP_DOWN"
-]
+observations = ["RGB_INTERLEAVED", "DEBUG.CAMERA_INTERLEAVED.TOP_DOWN"]
 
 config = {
     "width": "1024",
@@ -24,17 +22,13 @@ config = {
 }
 
 print(f"Loading level '{level_name}'...")
-env = deepmind_lab.Lab(
-    level=level_name,
-    observations=observations,
-    config=config
-)
+env = deepmind_lab.Lab(level=level_name, observations=observations, config=config)
 
 # Reset environment to generate the map & place entities
 env.reset(seed=1)
 
 # Advance 1 step so textures, cues, and lighting render
-#env.step([0] * 7, num_steps=1)
+# env.step([0] * 7, num_steps=1)
 action = np.zeros(7, dtype=np.intc)  # Assuming 7 discrete actions
 env.step(action, num_steps=1)
 

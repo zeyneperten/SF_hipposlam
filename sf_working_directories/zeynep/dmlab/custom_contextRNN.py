@@ -1,7 +1,8 @@
+from typing import Optional, Tuple
+
 import torch
 import torch.nn as nn
 from torch import Tensor
-from typing import Tuple, Optional
 
 
 class ContextRNN(nn.Module):
@@ -13,15 +14,16 @@ class ContextRNN(nn.Module):
     Rescola-Wagner style value update is used to ensure that the model can learn to maintain a memory of which arm was rewarded, even if the reward is delayed.
     The context vector is then used to modulate the DG layer and provide context to the decoder.
     """
+
     def __init__(
         self,
         ca3_dim: int,
         dg_dim: int,
         hidden_size: int = 6,
-        decoder_context_dim: int = 6, # keep it same as hidden_size
-        dg_strength: float = 0.1, # how much to modulate DG with context, keep it low so that the model doesn't fully rely on context and still learn
-        initial_decay: float = 0.95,      # Initial alpha decay rate (e.g. 0.95 per step)
-        learn_decay: bool = True,          # If True, alpha is learned via backprop
+        decoder_context_dim: int = 6,  # keep it same as hidden_size
+        dg_strength: float = 0.1,  # how much to modulate DG with context, keep it low so that the model doesn't fully rely on context and still learn
+        initial_decay: float = 0.95,  # Initial alpha decay rate (e.g. 0.95 per step)
+        learn_decay: bool = True,  # If True, alpha is learned via backprop
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -117,10 +119,12 @@ class ContextRNN(nn.Module):
 
         # 4. Feed updated [v_left, v_right, reward_pulse] into GRU
         rnn_in = torch.cat([v_new, reward_input], dim=-1)
-        h_new = self.rnn_cell(rnn_in, h_prev) # update the hidden state based on new value and reward.
+        h_new = self.rnn_cell(rnn_in, h_prev)  # update the hidden state based on new value and reward.
 
         # 5. Readout to Decoder and DG
-        decoder_context = torch.tanh(self.context_to_decoder(h_new)) # tells policy head which arm has high value
-        dg_gate_next = self.dg_strength * torch.tanh(self.context_to_dg(h_new)) # gating value to modulate at next step, so DG can subtly prime spatial representations for the next step without feedback loop
+        decoder_context = torch.tanh(self.context_to_decoder(h_new))  # tells policy head which arm has high value
+        dg_gate_next = self.dg_strength * torch.tanh(
+            self.context_to_dg(h_new)
+        )  # gating value to modulate at next step, so DG can subtly prime spatial representations for the next step without feedback loop
 
         return decoder_context, dg_gate_next, v_new, h_new

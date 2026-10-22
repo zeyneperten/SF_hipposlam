@@ -9,15 +9,23 @@ from sample_factory.algo.utils.shared_buffers import policy_output_shapes
 from sf_working_directories.zeynep.dmlab.custom_actor_critic import HighLevel_LossWrapper
 from sf_working_directories.zeynep.dmlab.custom_core import HighLevelRNNWrapperCore
 from sf_working_directories.zeynep.dmlab.custom_highlevelRNN import (
-    HighLevelContextRNN_Learner, high_level_policy_loss, q_loss,
+    HighLevelContextRNN_Learner,
+    high_level_policy_loss,
+    q_loss,
 )
 
 
 def make_core():
     cfg = SimpleNamespace(
-        Hippo_n_feature=2, Hippo_R=1, Hippo_L=2,
-        hl_K=2, hl_d_H=3, hl_history_len=2,
-        hl_is_policy=False, hl_deterministic=True, oracle_context=False,
+        Hippo_n_feature=2,
+        Hippo_R=1,
+        Hippo_L=2,
+        hl_K=2,
+        hl_d_H=3,
+        hl_history_len=2,
+        hl_is_policy=False,
+        hl_deterministic=True,
+        oracle_context=False,
     )
     return HighLevelRNNWrapperCore(cfg, input_size=9)
 
@@ -44,9 +52,16 @@ def test_actor_sampling_does_not_depend_on_autograd():
 
 def test_sampling_temperature_reaches_high_level_model():
     cfg = SimpleNamespace(
-        Hippo_n_feature=2, Hippo_R=1, Hippo_L=2,
-        hl_K=2, hl_d_H=3, hl_history_len=2, hl_tau=0.25,
-        hl_is_policy=False, hl_deterministic=False, oracle_context=False,
+        Hippo_n_feature=2,
+        Hippo_R=1,
+        Hippo_L=2,
+        hl_K=2,
+        hl_d_H=3,
+        hl_history_len=2,
+        hl_tau=0.25,
+        hl_is_policy=False,
+        hl_deterministic=False,
+        oracle_context=False,
     )
     core = HighLevelRNNWrapperCore(cfg, input_size=9)
     assert core.hl_learner.tau == 0.25
@@ -63,8 +78,7 @@ def test_actor_mode_is_a_recorded_policy_output():
             self.core = object()
 
         def forward(self):
-            return {"values": torch.zeros(1),
-                    "new_rnn_states": torch.tensor([[10.0, 1.0, 0.0]])}
+            return {"values": torch.zeros(1), "new_rnn_states": torch.tensor([[10.0, 1.0, 0.0]])}
 
         def summaries(self):
             return {}
@@ -104,14 +118,14 @@ def test_trial_history_survives_chunk_boundary_and_trains_rnn_cell():
         # First center trigger makes the initial choice. There is no previous
         # trial to record yet.
         _, state = core(frame(outcome=1), state)
-        assert state[:, core.history_start:core.history_start + core.history_size].sum() == 0
+        assert state[:, core.history_start : core.history_start + core.history_size].sum() == 0
         # Next trigger occurs in a later rollout and records the completed trial.
         _, state = core(frame(outcome=1, reward=1), state)
-    history = state[:, core.history_start:core.history_start + core.history_size]
+    history = state[:, core.history_start : core.history_start + core.history_size]
     assert history.reshape(1, 2, core.event_width)[0, -1, -1].item() == 1
 
     core.zero_grad()
-    scores = core.scores_from_history(history, state[:, core.base_state_size:core.history_start])
+    scores = core.scores_from_history(history, state[:, core.base_state_size : core.history_start])
     loss = (scores[0, 0] - 1.0).square()
     loss.backward()
     assert core.hl_learner.rnn_cell.weight_ih.grad.abs().sum() > 0
@@ -123,13 +137,12 @@ def test_replay_uses_recorded_actor_mode_for_decoder():
     with torch.no_grad():
         _, state = core(frame(outcome=1), state)
 
-    actor_z = F.one_hot(1 - state[:, -core.K:].argmax(dim=-1), core.K).float()
-    history = state[:, core.history_start:core.history_start + core.history_size]
-    replay_input = torch.cat((frame(outcome=1, reward=1), history, actor_z,
-                              torch.ones(1, 1)), dim=-1)
+    actor_z = F.one_hot(1 - state[:, -core.K :].argmax(dim=-1), core.K).float()
+    history = state[:, core.history_start : core.history_start + core.history_size]
+    replay_input = torch.cat((frame(outcome=1, reward=1), history, actor_z, torch.ones(1, 1)), dim=-1)
     packed = torch.nn.utils.rnn.pack_padded_sequence(replay_input.unsqueeze(0), [1])
     output, _ = core(packed, state)
-    assert torch.equal(output.data[:, -core.K:], actor_z)
+    assert torch.equal(output.data[:, -core.K :], actor_z)
 
 
 def test_replay_loss_reaches_prior_trial_update():
@@ -139,10 +152,9 @@ def test_replay_loss_reaches_prior_trial_update():
         _, state = core(frame(outcome=1), state)
         _, state = core(frame(outcome=1, reward=1), state)
 
-    history = state[:, core.history_start:core.history_start + core.history_size]
-    actor_z = state[:, -core.K:]
-    replay_input = torch.cat((frame(outcome=1, reward=0), history, actor_z,
-                              torch.ones(1, 1)), dim=-1)
+    history = state[:, core.history_start : core.history_start + core.history_size]
+    actor_z = state[:, -core.K :]
+    replay_input = torch.cat((frame(outcome=1, reward=0), history, actor_z, torch.ones(1, 1)), dim=-1)
     packed = torch.nn.utils.rnn.pack_padded_sequence(replay_input.unsqueeze(0), [1])
     core.zero_grad()
     core(packed, state)
@@ -155,10 +167,9 @@ def test_invalid_transition_does_not_contribute_to_high_level_loss():
     state = torch.zeros(1, core.get_core_state_size())
     with torch.no_grad():
         _, state = core(frame(outcome=1), state)
-    history = state[:, core.history_start:core.history_start + core.history_size]
-    actor_z = state[:, -core.K:]
-    replay_input = torch.cat((frame(outcome=1, reward=1), history, actor_z,
-                              torch.zeros(1, 1)), dim=-1)
+    history = state[:, core.history_start : core.history_start + core.history_size]
+    actor_z = state[:, -core.K :]
+    replay_input = torch.cat((frame(outcome=1, reward=1), history, actor_z, torch.zeros(1, 1)), dim=-1)
     packed = torch.nn.utils.rnn.pack_padded_sequence(replay_input.unsqueeze(0), [1])
     core(packed, state)
     assert core.last_hl_loss.item() == 0.0

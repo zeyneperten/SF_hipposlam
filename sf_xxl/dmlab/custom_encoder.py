@@ -760,6 +760,7 @@ class ResNet18Layer2(Encoder):
     Use ResNet-18 up to layer2 (i.e., conv1/bn1/relu/maxpool -> layer1 -> layer2),
     then a downsample (AvgPool2d) and flatten.
     """
+
     def __init__(self, cfg, obs_space, pretrained=True, fixed=True, down_k=3, down_s=2, down_p=1):
         super().__init__(cfg)
 
@@ -793,13 +794,13 @@ class ResNet18Layer2(Encoder):
 
         # --- Build the feature trunk up to layer2
         stem = nn.Sequential(
-            resnet.conv1,   # 64, stride=2, kernel=7
+            resnet.conv1,  # 64, stride=2, kernel=7
             resnet.bn1,
             resnet.relu,
-            resnet.maxpool, # /4 spatial after stem (given stride/pool)
+            resnet.maxpool,  # /4 spatial after stem (given stride/pool)
         )
         self.features = nn.Sequential(
-            stem,           # -> [N, 64, H/4, W/4] roughly
+            stem,  # -> [N, 64, H/4, W/4] roughly
             resnet.layer1,  # -> [N, 64, ...]
             resnet.layer2,  # -> [N, 128, ...]
         )
@@ -809,9 +810,9 @@ class ResNet18Layer2(Encoder):
 
         # --- ImageNet per-channel mean/std (for Normalize-like behavior)
         mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32)[:, None, None]
-        std  = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32)[:, None, None]
+        std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32)[:, None, None]
         self.register_buffer("mn_mean", mean)
-        self.register_buffer("mn_std",  std)
+        self.register_buffer("mn_std", std)
 
         # --- Compute encoder_out_size dynamically from obs_space
         _, H, W = obs_space.shape
@@ -830,8 +831,8 @@ class ResNet18Layer2(Encoder):
         # If upstream obs are raw [0,1], this matches ImageNet normalization.
         # If upstream obs are already zero-mean/unit-std, consider disabling that upstream norm.
         x = (x - self.mn_mean) / self.mn_std
-        x = self.features(x)      # [N, 128, H', W']
-        x = self.downsample(x)    # [N, 128, H'', W'']
+        x = self.features(x)  # [N, 128, H', W']
+        x = self.downsample(x)  # [N, 128, H'', W'']
         return torch.flatten(x, 1)
 
     def get_out_size(self) -> int:
@@ -842,19 +843,21 @@ import cv2
 import numpy as np
 import torch.nn.functional as F
 
+
 class RandomGaborEncoder(Encoder):
     """
     Visual encoder that begins with a frozen bank of Gabor filters (randomized orientations
     and scales), followed by a small stack of learnable convolutions to detect geometric
     compositions (e.g. walls, corners) in DeepMind Lab scenes.
     """
+
     def __init__(self, cfg, obs_space, pretrained=False, fixed=True):
         super().__init__(cfg)
         in_ch = obs_space.shape[0]
         # -- Gabor bank parameters (can be overridden via cfg) --
-        num_scales = getattr(cfg, 'gabor_scales', 3)
-        num_orient = getattr(cfg, 'gabor_orientations', 8)
-        ksize = getattr(cfg, 'gabor_kernel_size', 21)
+        num_scales = getattr(cfg, "gabor_scales", 3)
+        num_orient = getattr(cfg, "gabor_orientations", 8)
+        ksize = getattr(cfg, "gabor_kernel_size", 21)
         # build frequency & orientation lists
         freqs = np.linspace(0.05, 0.4, num_scales)
         thetas = np.linspace(0, np.pi, num_orient, endpoint=False)
@@ -865,37 +868,31 @@ class RandomGaborEncoder(Encoder):
         for freq in freqs:
             for theta in thetas:
                 kern = cv2.getGaborKernel(
-                    ksize=(ksize, ksize),
-                    sigma=ksize/6.0,
-                    theta=theta,
-                    lambd=ksize/(2.0*freq),
-                    gamma=0.5,
-                    psi=0
+                    ksize=(ksize, ksize), sigma=ksize / 6.0, theta=theta, lambd=ksize / (2.0 * freq), gamma=0.5, psi=0
                 ).astype(np.float32)
                 kernels.append(kern)
-        bank = np.stack(kernels, axis=0)                   # [K, H, W]
-        bank = bank[:, None, :, :]                         # [K,1,H,W]
-        bank = np.repeat(bank, in_ch, axis=1)              # [K,in_ch,H,W]
+        bank = np.stack(kernels, axis=0)  # [K, H, W]
+        bank = bank[:, None, :, :]  # [K,1,H,W]
+        bank = np.repeat(bank, in_ch, axis=1)  # [K,in_ch,H,W]
         # define frozen conv with Gabor weights
-        self.gabor_conv = nn.Conv2d(
-            in_ch, self.num_gabor,
-            kernel_size=ksize, padding=ksize//2, bias=False
-        )
+        self.gabor_conv = nn.Conv2d(in_ch, self.num_gabor, kernel_size=ksize, padding=ksize // 2, bias=False)
         with torch.no_grad():
             self.gabor_conv.weight.copy_(torch.from_numpy(bank))
-        for p in self.gabor_conv.parameters(): p.requires_grad = False
+        for p in self.gabor_conv.parameters():
+            p.requires_grad = False
 
         # -- Learnable convolutional stack to compose shape features --
-        mid_ch = getattr(cfg, 'gabor_mid_channels', 16)
+        mid_ch = getattr(cfg, "gabor_mid_channels", 16)
         self.conv_stack = nn.Sequential(
             nn.Conv2d(self.num_gabor, mid_ch, stride=2, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(mid_ch, mid_ch, stride=2, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
         )
         # optionally freeze or fine-tune
         if fixed:
-            for p in self.conv_stack.parameters(): p.requires_grad = False
+            for p in self.conv_stack.parameters():
+                p.requires_grad = False
         # global pooling
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.downsample = nn.AvgPool2d(kernel_size=3, stride=2, padding=1)
@@ -906,10 +903,10 @@ class RandomGaborEncoder(Encoder):
         #     self.conv_stack
         # )
         # self.conv_head_out_size = calc_num_elements(self.measure, obs_space.shape)
-        self.encoder_out_size   = mid_ch * (96//8)*(72//8)  # assuming input is 96x72, adjust if different
+        self.encoder_out_size = mid_ch * (96 // 8) * (72 // 8)  # assuming input is 96x72, adjust if different
 
         # move to device
-        device = 'cuda' if getattr(cfg, 'device','').lower() in ('cuda','gpu') else 'cpu'
+        device = "cuda" if getattr(cfg, "device", "").lower() in ("cuda", "gpu") else "cpu"
         self.model_to_device(device)
 
     def forward(self, x):
@@ -925,8 +922,6 @@ class RandomGaborEncoder(Encoder):
 
     def get_out_size(self):
         return self.encoder_out_size
-
-
 
 
 def make_img_encoder(cfg: Config, obs_space: ObsSpace) -> Encoder:

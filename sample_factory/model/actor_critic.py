@@ -169,7 +169,7 @@ class ActorCriticSharedWeights(ActorCritic):
         if getattr(self.cfg, "hl_dg_from_prev_z", False):
             if rnn_states is None:
                 raise ValueError("Prior-mode DG conditioning requires recurrent states")
-            x = self.encoder(normalized_obs_dict, previous_mode=rnn_states[:, -self.cfg.hl_K:])
+            x = self.encoder(normalized_obs_dict, previous_mode=rnn_states[:, -self.cfg.hl_K :])
         else:
             x = self.encoder(normalized_obs_dict)
         return x
@@ -201,7 +201,11 @@ class ActorCriticSharedWeights(ActorCritic):
     def forward(
         self, normalized_obs_dict, rnn_states, values_only=False, action_mask: Optional[Tensor] = None
     ) -> TensorDict:
-        x = self.forward_head(normalized_obs_dict, rnn_states) if getattr(self.cfg, "hl_dg_from_prev_z", False) else self.forward_head(normalized_obs_dict)
+        x = (
+            self.forward_head(normalized_obs_dict, rnn_states)
+            if getattr(self.cfg, "hl_dg_from_prev_z", False)
+            else self.forward_head(normalized_obs_dict)
+        )
         x, new_rnn_states = self.forward_core(x, rnn_states)
         result = self.forward_tail(x, values_only, sample_actions=True, action_mask=action_mask)
         result["new_rnn_states"] = new_rnn_states

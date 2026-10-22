@@ -1,17 +1,18 @@
 from typing import Dict, Optional, overload
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch import _VF, Tensor
 from torch.nn import RNNBase
 from torch.nn.parameter import Parameter
 from torch.nn.utils.rnn import PackedSequence
-import torch.nn.functional as F
-import torch.nn as nn
 
 from sample_factory.utils.utils import log
 
+
 class CustomRNN(RNNBase):
-   
+
     @overload
     def __init__(
         self,
@@ -19,7 +20,7 @@ class CustomRNN(RNNBase):
         hidden_size: int,
         num_layers: int = 1,
         nonlinearity: str = "tanh",
-        rank = 1,  # added the rank to allow low-rank adaptations
+        rank=1,  # added the rank to allow low-rank adaptations
         bias: bool = True,
         batch_first: bool = False,
         dropout: float = 0.0,
@@ -33,16 +34,14 @@ class CustomRNN(RNNBase):
 
     def __init__(self, *args, **kwargs):
         if "proj_size" in kwargs:
-            raise ValueError(
-                "proj_size argument is only supported for LSTM, not RNN or GRU"
-            )
+            raise ValueError("proj_size argument is only supported for LSTM, not RNN or GRU")
         if len(args) > 1:
             self.hidden_size = args[1]
         else:
             self.hidden_size = kwargs.get("hidden_size", 0)
         if len(args) > 3:
             self.nonlinearity = args[3]
-            self.rank = args[4] 
+            self.rank = args[4]
             args = args[:3] + args[4:]
         else:
             self.nonlinearity = kwargs.pop("nonlinearity", "tanh")
@@ -56,10 +55,8 @@ class CustomRNN(RNNBase):
         elif self.nonlinearity == "relu":
             mode = "RNN_RELU"
         else:
-            raise ValueError(
-                f"Unknown nonlinearity '{self.nonlinearity}'. Select from 'tanh' or 'relu'."
-            )
-        
+            raise ValueError(f"Unknown nonlinearity '{self.nonlinearity}'. Select from 'tanh' or 'relu'.")
+
         if len(args) > 9:
             self.device = args[9]
         else:
@@ -70,25 +67,20 @@ class CustomRNN(RNNBase):
             self.dtype = kwargs.get("dtype", None)
         factory_kwargs = {"device": self.device, "dtype": self.dtype}
 
-        #for layer in range(self.num_layers):
-            #for direction in range(num_directions):
-
+        # for layer in range(self.num_layers):
+        # for direction in range(num_directions):
 
         super().__init__(mode, *args, **kwargs)
 
-        # change the rnn constructor to include low rank adaptation  
+        # change the rnn constructor to include low rank adaptation
         # B
-        self.lr_column = Parameter(
-            torch.empty((self.hidden_size, self.rank), **factory_kwargs)
-        )
+        self.lr_column = Parameter(torch.empty((self.hidden_size, self.rank), **factory_kwargs))
         # A
-        self.lr_row = Parameter(
-            torch.empty((self.rank, self.hidden_size), **factory_kwargs)
-        )
+        self.lr_row = Parameter(torch.empty((self.rank, self.hidden_size), **factory_kwargs))
 
         self.reset_parameters()
 
-        # add to log 
+        # add to log
         self._feedback_forward_count = 0
 
         self.feedback_norm = torch.nn.LayerNorm(self.hidden_size, elementwise_affine=False)
@@ -123,7 +115,6 @@ class CustomRNN(RNNBase):
             "rnn/effective_recurrence_gain_last": float(gain_per_t[-1]),
         }
 
-
     def set_fixed_weights(self, W_in, W_hh):
         """
         Configure fixed CA3 weights and constrained DG-feedback LoRA.
@@ -134,7 +125,7 @@ class CustomRNN(RNNBase):
         lr_column = W_in          fixed
         lr_row    = W_feedback    trainable
         """
-        with torch.no_grad(): # disable gradient calculation for fixed weights
+        with torch.no_grad():  # disable gradient calculation for fixed weights
             self.weight_ih_l0.copy_(W_in)
             self.weight_hh_l0.copy_(W_hh)
 
@@ -154,24 +145,18 @@ class CustomRNN(RNNBase):
         self.lr_row.requires_grad_(True)
 
     def update_weights():
-        # 
- 
-        pass
+        #
 
-
-    @overload
-    @torch._jit_internal._overload_method  # noqa: F811
-    def forward(
-        self, input: Tensor, hx: Optional[Tensor] = None
-    ) -> tuple[Tensor, Tensor]:
         pass
 
     @overload
     @torch._jit_internal._overload_method  # noqa: F811
+    def forward(self, input: Tensor, hx: Optional[Tensor] = None) -> tuple[Tensor, Tensor]:
+        pass
 
-    def forward(
-        self, input: PackedSequence, hx: Optional[Tensor] = None
-    ) -> tuple[PackedSequence, Tensor]:
+    @overload
+    @torch._jit_internal._overload_method  # noqa: F811
+    def forward(self, input: PackedSequence, hx: Optional[Tensor] = None) -> tuple[PackedSequence, Tensor]:
         pass
 
     def forward(self, input, hx=None):
@@ -193,7 +178,7 @@ class CustomRNN(RNNBase):
             raise RuntimeError("RNN tensor input contains NaN or Inf")
 
         return self._forward_bounded_feedback_tensor(input, hx)
-    
+
     def _bounded_feedback_step(
         self,
         x_t,
@@ -218,10 +203,7 @@ class CustomRNN(RNNBase):
 
         effective_dg_input = x_t + feedback
 
-        pre_activation = (
-            effective_dg_input @ W_in.T
-            + h_prev @ W_hh_base.T
-        )
+        pre_activation = effective_dg_input @ W_in.T + h_prev @ W_hh_base.T
 
         if self.nonlinearity == "relu":
             h_new = F.relu(pre_activation)
@@ -239,24 +221,16 @@ class CustomRNN(RNNBase):
         Explicit bounded-feedback recurrence for non-packed RNN input.
         """
         if self.num_layers != 1:
-            raise NotImplementedError(
-                "Bounded-feedback recurrence currently supports num_layers=1 only"
-            )
+            raise NotImplementedError("Bounded-feedback recurrence currently supports num_layers=1 only")
 
         if self.bidirectional:
-            raise NotImplementedError(
-                "Bounded-feedback recurrence does not support bidirectional=True"
-            )
+            raise NotImplementedError("Bounded-feedback recurrence does not support bidirectional=True")
 
         if self.dropout != 0.0:
-            raise NotImplementedError(
-                "Bounded-feedback recurrence does not support nonzero dropout"
-            )
+            raise NotImplementedError("Bounded-feedback recurrence does not support nonzero dropout")
 
         if input.dim() not in (2, 3):
-            raise ValueError(
-                f"Expected a 2D or 3D tensor, got {input.dim()}D tensor"
-            )
+            raise ValueError(f"Expected a 2D or 3D tensor, got {input.dim()}D tensor")
 
         original_input_was_unbatched = input.dim() == 2
 
@@ -267,10 +241,7 @@ class CustomRNN(RNNBase):
 
             if hx is not None:
                 if hx.dim() != 2:
-                    raise RuntimeError(
-                        "For unbatched 2D input, hx must be 2D; "
-                        f"got hx.dim()={hx.dim()}"
-                    )
+                    raise RuntimeError("For unbatched 2D input, hx must be 2D; " f"got hx.dim()={hx.dim()}")
                 hx = hx.unsqueeze(1)
 
         # Work internally as [B, T, input_size].
@@ -282,9 +253,7 @@ class CustomRNN(RNNBase):
         B, T, input_size = input_batched.shape
 
         if input_size != self.input_size:
-            raise RuntimeError(
-                f"Expected input_size={self.input_size}, got {input_size}"
-            )
+            raise RuntimeError(f"Expected input_size={self.input_size}, got {input_size}")
 
         if hx is None:
             h = torch.zeros(
@@ -295,9 +264,7 @@ class CustomRNN(RNNBase):
             )
         else:
             if hx.dim() != 3:
-                raise RuntimeError(
-                    f"Expected hx to be 3D after batching, got hx.dim()={hx.dim()}"
-                )
+                raise RuntimeError(f"Expected hx to be 3D after batching, got hx.dim()={hx.dim()}")
 
             if hx.shape != (1, B, self.hidden_size):
                 raise RuntimeError(
@@ -338,14 +305,10 @@ class CustomRNN(RNNBase):
             )
 
             if not torch.isfinite(raw_feedback).all():
-                raise RuntimeError(
-                    f"Raw feedback contains NaN/Inf at timestep={t}"
-                )
+                raise RuntimeError(f"Raw feedback contains NaN/Inf at timestep={t}")
 
             if not torch.isfinite(feedback).all():
-                raise RuntimeError(
-                    f"Bounded feedback contains NaN/Inf at timestep={t}"
-                )
+                raise RuntimeError(f"Bounded feedback contains NaN/Inf at timestep={t}")
 
             if not torch.isfinite(h_new).all():
                 raise RuntimeError(
@@ -359,8 +322,7 @@ class CustomRNN(RNNBase):
 
             if feedback_max.item() > 1.00001:
                 raise RuntimeError(
-                    f"Bounded feedback exceeds tanh bound at timestep={t}: "
-                    f"max_abs={feedback_max.item():.6g}"
+                    f"Bounded feedback exceeds tanh bound at timestep={t}: " f"max_abs={feedback_max.item():.6g}"
                 )
 
             # A tanh CA3 activation must also remain in [-1, 1].
@@ -368,8 +330,7 @@ class CustomRNN(RNNBase):
 
             if self.nonlinearity == "tanh" and h_new_max.item() > 1.00001:
                 raise RuntimeError(
-                    f"Tanh CA3 state exceeds tanh bound at timestep={t}: "
-                    f"max_abs={h_new_max.item():.6g}"
+                    f"Tanh CA3 state exceeds tanh bound at timestep={t}: " f"max_abs={h_new_max.item():.6g}"
                 )
 
             h = h_new
@@ -444,19 +405,13 @@ class CustomRNN(RNNBase):
             - tanh or relu
         """
         if self.num_layers != 1:
-            raise NotImplementedError(
-                "Bounded-feedback recurrence currently supports num_layers=1 only"
-            )
+            raise NotImplementedError("Bounded-feedback recurrence currently supports num_layers=1 only")
 
         if self.bidirectional:
-            raise NotImplementedError(
-                "Bounded-feedback recurrence does not support bidirectional=True"
-            )
+            raise NotImplementedError("Bounded-feedback recurrence does not support bidirectional=True")
 
         if self.dropout != 0.0:
-            raise NotImplementedError(
-                "Bounded-feedback recurrence does not support nonzero dropout"
-            )
+            raise NotImplementedError("Bounded-feedback recurrence does not support nonzero dropout")
 
         data = packed_input.data
         batch_sizes = packed_input.batch_sizes
@@ -464,15 +419,10 @@ class CustomRNN(RNNBase):
         unsorted_indices = packed_input.unsorted_indices
 
         if data.dim() != 2:
-            raise RuntimeError(
-                f"PackedSequence data must be 2D, got shape={tuple(data.shape)}"
-            )
+            raise RuntimeError(f"PackedSequence data must be 2D, got shape={tuple(data.shape)}")
 
         if data.shape[1] != self.input_size:
-            raise RuntimeError(
-                f"Expected packed input_size={self.input_size}, "
-                f"got {data.shape[1]}"
-            )
+            raise RuntimeError(f"Expected packed input_size={self.input_size}, " f"got {data.shape[1]}")
 
         if not torch.isfinite(data).all():
             raise RuntimeError("PackedSequence input data contains NaN or Inf")
@@ -488,9 +438,7 @@ class CustomRNN(RNNBase):
             )
         else:
             if hx.dim() != 3:
-                raise RuntimeError(
-                    f"Packed hx must be 3D, got hx.dim()={hx.dim()}"
-                )
+                raise RuntimeError(f"Packed hx must be 3D, got hx.dim()={hx.dim()}")
 
             # Reorder initial hidden states to the PackedSequence sorted order.
             hx = self.permute_hidden(hx, sorted_indices)
@@ -541,14 +489,10 @@ class CustomRNN(RNNBase):
             )
 
             if not torch.isfinite(raw_feedback).all():
-                raise RuntimeError(
-                    f"Packed raw feedback contains NaN/Inf at timestep={t}"
-                )
+                raise RuntimeError(f"Packed raw feedback contains NaN/Inf at timestep={t}")
 
             if not torch.isfinite(feedback).all():
-                raise RuntimeError(
-                    f"Packed bounded feedback contains NaN/Inf at timestep={t}"
-                )
+                raise RuntimeError(f"Packed bounded feedback contains NaN/Inf at timestep={t}")
 
             if not torch.isfinite(h_new).all():
                 raise RuntimeError(
@@ -561,16 +505,14 @@ class CustomRNN(RNNBase):
 
             if feedback_max.item() > 1.00001:
                 raise RuntimeError(
-                    f"Packed bounded feedback exceeds tanh bound at timestep={t}: "
-                    f"max_abs={feedback_max.item():.6g}"
+                    f"Packed bounded feedback exceeds tanh bound at timestep={t}: " f"max_abs={feedback_max.item():.6g}"
                 )
 
             h_new_max = h_new.detach().abs().max()
 
             if self.nonlinearity == "tanh" and h_new_max.item() > 1.00001:
                 raise RuntimeError(
-                    f"Packed tanh CA3 state exceeds tanh bound at timestep={t}: "
-                    f"max_abs={h_new_max.item():.6g}"
+                    f"Packed tanh CA3 state exceeds tanh bound at timestep={t}: " f"max_abs={h_new_max.item():.6g}"
                 )
 
             # Only active sequence states are updated. Inactive trailing rows retain
@@ -597,8 +539,7 @@ class CustomRNN(RNNBase):
 
         if offset != data.shape[0]:
             raise RuntimeError(
-                f"Packed data traversal mismatch: consumed {offset}, "
-                f"but data has {data.shape[0]} rows"
+                f"Packed data traversal mismatch: consumed {offset}, " f"but data has {data.shape[0]} rows"
             )
 
         output_data = torch.cat(outputs, dim=0)
@@ -609,9 +550,7 @@ class CustomRNN(RNNBase):
         hidden_sorted = h.unsqueeze(0)
 
         if not torch.isfinite(hidden_sorted).all():
-            raise RuntimeError(
-                "Packed bounded-feedback final hidden state contains NaN or Inf"
-            )
+            raise RuntimeError("Packed bounded-feedback final hidden state contains NaN or Inf")
 
         # Restore original batch order for the caller.
         hidden = self.permute_hidden(hidden_sorted, unsorted_indices)

@@ -1,17 +1,18 @@
 from typing import Optional, overload
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch import _VF, Tensor
 from torch.nn import RNNBase
 from torch.nn.parameter import Parameter
 from torch.nn.utils.rnn import PackedSequence
-import torch.nn.functional as F
-import torch.nn as nn
 
 from sample_factory.utils.utils import log
 
+
 class CustomRNN(RNNBase):
-   
+
     @overload
     def __init__(
         self,
@@ -19,7 +20,7 @@ class CustomRNN(RNNBase):
         hidden_size: int,
         num_layers: int = 1,
         nonlinearity: str = "tanh",
-        rank = 1,  # added the rank to allow low-rank adaptations
+        rank=1,  # added the rank to allow low-rank adaptations
         bias: bool = True,
         batch_first: bool = False,
         dropout: float = 0.0,
@@ -33,16 +34,14 @@ class CustomRNN(RNNBase):
 
     def __init__(self, *args, **kwargs):
         if "proj_size" in kwargs:
-            raise ValueError(
-                "proj_size argument is only supported for LSTM, not RNN or GRU"
-            )
+            raise ValueError("proj_size argument is only supported for LSTM, not RNN or GRU")
         if len(args) > 1:
             self.hidden_size = args[1]
         else:
             self.hidden_size = kwargs.get("hidden_size", 0)
         if len(args) > 3:
             self.nonlinearity = args[3]
-            self.rank = args[4] 
+            self.rank = args[4]
             args = args[:3] + args[4:]
         else:
             self.nonlinearity = kwargs.pop("nonlinearity", "tanh")
@@ -56,10 +55,8 @@ class CustomRNN(RNNBase):
         elif self.nonlinearity == "relu":
             mode = "RNN_RELU"
         else:
-            raise ValueError(
-                f"Unknown nonlinearity '{self.nonlinearity}'. Select from 'tanh' or 'relu'."
-            )
-        
+            raise ValueError(f"Unknown nonlinearity '{self.nonlinearity}'. Select from 'tanh' or 'relu'.")
+
         if len(args) > 9:
             self.device = args[9]
         else:
@@ -70,27 +67,21 @@ class CustomRNN(RNNBase):
             self.dtype = kwargs.get("dtype", None)
         factory_kwargs = {"device": self.device, "dtype": self.dtype}
 
-        #for layer in range(self.num_layers):
-            #for direction in range(num_directions):
-
+        # for layer in range(self.num_layers):
+        # for direction in range(num_directions):
 
         super().__init__(mode, *args, **kwargs)
 
         # change the rnn constructor to include low rank adaptation  #Idee: mach das zum parameter aber nicht teil der offiziellen liste, damit es trainiert wird aber nicht an den c code übergeben wird
         # B
-        self.lr_column = Parameter(
-            torch.empty((self.hidden_size, self.rank), **factory_kwargs)
-        )
+        self.lr_column = Parameter(torch.empty((self.hidden_size, self.rank), **factory_kwargs))
         # A
-        self.lr_row = Parameter(
-            torch.empty((self.rank, self.hidden_size), **factory_kwargs)
-        )
+        self.lr_row = Parameter(torch.empty((self.rank, self.hidden_size), **factory_kwargs))
 
         self.reset_parameters()
 
-        # add to log 
+        # add to log
         self._feedback_forward_count = 0
-
 
     def set_fixed_weights(self, W_in, W_hh):
         """
@@ -102,7 +93,7 @@ class CustomRNN(RNNBase):
         lr_column = W_in          fixed
         lr_row    = W_feedback    trainable
         """
-        with torch.no_grad(): # disable gradient calculation for fixed weights
+        with torch.no_grad():  # disable gradient calculation for fixed weights
             self.weight_ih_l0.copy_(W_in)
             self.weight_hh_l0.copy_(W_hh)
 
@@ -122,34 +113,28 @@ class CustomRNN(RNNBase):
         self.lr_row.requires_grad_(True)
 
     def update_weights():
-        # 
- 
-        pass
+        #
 
-
-    @overload
-    @torch._jit_internal._overload_method  # noqa: F811
-    def forward(
-        self, input: Tensor, hx: Optional[Tensor] = None
-    ) -> tuple[Tensor, Tensor]:
         pass
 
     @overload
     @torch._jit_internal._overload_method  # noqa: F811
+    def forward(self, input: Tensor, hx: Optional[Tensor] = None) -> tuple[Tensor, Tensor]:
+        pass
 
-    def forward(
-        self, input: PackedSequence, hx: Optional[Tensor] = None
-    ) -> tuple[PackedSequence, Tensor]:
+    @overload
+    @torch._jit_internal._overload_method  # noqa: F811
+    def forward(self, input: PackedSequence, hx: Optional[Tensor] = None) -> tuple[PackedSequence, Tensor]:
         pass
 
     def forward(self, input, hx=None):  # noqa: F811
         """
         Runs the forward pass.
         """
-        '''
+        """
         new_W_hh = self.weight_hh_l0 + self.lr_column @ self.lr_row
         self.weight_hh_l0 = new_W_hh
-        '''
+        """
         self._feedback_forward_count += 1
         self._update_flat_weights()
 
@@ -158,19 +143,19 @@ class CustomRNN(RNNBase):
 
         idx = self._flat_weights_names.index("weight_hh_l0")
         W_hh_base = weights[idx]
-        #new_W_hh = W_hh_base + self.lr_column @ self.lr_row
+        # new_W_hh = W_hh_base + self.lr_column @ self.lr_row
 
         # UNIT NORMALIZATION of lr_row #
-        #direction = F.normalize(
+        # direction = F.normalize(
         #    self.lr_row,
         #    p=2.0,
         #    dim=None,
         #    eps=1e-8,
         #    )
 
-        #W_feedback = direction
-        #delta_W_hh = self.lr_column @ W_feedback
-        #new_W_hh = W_hh_base + delta_W_hh
+        # W_feedback = direction
+        # delta_W_hh = self.lr_column @ W_feedback
+        # new_W_hh = W_hh_base + delta_W_hh
         ###
 
         # UNIT NORMALIZATION of delta_W_hh #
@@ -213,9 +198,8 @@ class CustomRNN(RNNBase):
         if isinstance(orig_input, PackedSequence):
             input, batch_sizes, sorted_indices, unsorted_indices = input
 
-
             if not torch.isfinite(input).all():
-                raise RuntimeError("RNN input contains NaN or Inf") # Previous step produced invalid input 
+                raise RuntimeError("RNN input contains NaN or Inf")  # Previous step produced invalid input
 
             max_batch_size = batch_sizes[0]
             # script() is unhappy when max_batch_size is different type in cond branches, so we duplicate
@@ -234,9 +218,7 @@ class CustomRNN(RNNBase):
         else:
             batch_sizes = None
             if input.dim() not in (2, 3):
-                raise ValueError(
-                    f"RNN: Expected input to be 2D or 3D, got {input.dim()}D tensor instead"
-                )
+                raise ValueError(f"RNN: Expected input to be 2D or 3D, got {input.dim()}D tensor instead")
             is_batched = input.dim() == 3
             batch_dim = 0 if self.batch_first else 1
             if not is_batched:
@@ -249,9 +231,7 @@ class CustomRNN(RNNBase):
                     hx = hx.unsqueeze(1)
             else:
                 if hx is not None and hx.dim() != 3:
-                    raise RuntimeError(
-                        f"For batched 3-D input, hx should also be 3-D but got {hx.dim()}-D tensor"
-                    )
+                    raise RuntimeError(f"For batched 3-D input, hx should also be 3-D but got {hx.dim()}-D tensor")
             max_batch_size = input.size(0) if self.batch_first else input.size(1)
             sorted_indices = None
             unsorted_indices = None
@@ -271,8 +251,10 @@ class CustomRNN(RNNBase):
         assert hx is not None
 
         if not torch.isfinite(hx).all():
-            raise RuntimeError("CustomRNN hidden state hx contains NaN or Inf") # Recurrent stat is invalid in an earlier step 
-        
+            raise RuntimeError(
+                "CustomRNN hidden state hx contains NaN or Inf"
+            )  # Recurrent stat is invalid in an earlier step
+
         self.check_forward_args(input, hx, batch_sizes)
         assert self.mode == "RNN_TANH" or self.mode == "RNN_RELU"
         if batch_sizes is None:
@@ -300,7 +282,7 @@ class CustomRNN(RNNBase):
                     self.bidirectional,
                     self.batch_first,
                 )
-                
+
         else:
             if self.mode == "RNN_TANH":
                 result = _VF.rnn_tanh(
@@ -333,11 +315,11 @@ class CustomRNN(RNNBase):
         if not torch.isfinite(output).all():
             raise RuntimeError(
                 "CustomRNN output contains NaN/Inf; "
-                    f"lr_row_norm={torch.linalg.vector_norm(self.lr_row).item():.6g}, "
-                    f"delta_norm={torch.linalg.matrix_norm(delta_W_hh, ord='fro').item():.6g}, "
-                    f"W_hh_norm={torch.linalg.matrix_norm(W_hh_base, ord='fro').item():.6g}"
-                )        # RNN output is invalid
-        
+                f"lr_row_norm={torch.linalg.vector_norm(self.lr_row).item():.6g}, "
+                f"delta_norm={torch.linalg.matrix_norm(delta_W_hh, ord='fro').item():.6g}, "
+                f"W_hh_norm={torch.linalg.matrix_norm(W_hh_base, ord='fro').item():.6g}"
+            )  # RNN output is invalid
+
         if self._feedback_forward_count % 50 == 0:
             with torch.no_grad():
                 log.debug(
@@ -356,12 +338,10 @@ class CustomRNN(RNNBase):
                     PackedSequence(output, batch_sizes, sorted_indices, unsorted_indices)
                 )
                 per_timestep_max = padded_output.abs().amax(dim=(1, 2))
-                log.debug(f"output_abs_max_per_timestep={per_timestep_max.tolist()}") 
+                log.debug(f"output_abs_max_per_timestep={per_timestep_max.tolist()}")
 
         if isinstance(orig_input, PackedSequence):
-            output_packed = PackedSequence(
-                output, batch_sizes, sorted_indices, unsorted_indices
-            )
+            output_packed = PackedSequence(output, batch_sizes, sorted_indices, unsorted_indices)
             return output_packed, self.permute_hidden(hidden, unsorted_indices)
 
         if not is_batched:  # type: ignore[possibly-undefined]

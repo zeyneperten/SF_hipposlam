@@ -1,17 +1,15 @@
 from sample_factory.launcher.run_description import Experiment, ParamGrid, RunDescription
 
-from sample_factory.launcher.run_description import Experiment, ParamGrid, RunDescription
-
-#_params = ParamGrid(
+# _params = ParamGrid(
 #    [
-        # -------------------------------------------------
-        # Positional encoding sweep
-        # -------------------------------------------------
-        # Seeds
+# -------------------------------------------------
+# Positional encoding sweep
+# -------------------------------------------------
+# Seeds
 #        ("seed", [1111, 2222, 3333, 4444, 5555]),
 #        #("seed", [2222]),
 #    ]
-#)
+# )
 
 # _params = ParamGrid(
 #     [
@@ -54,7 +52,7 @@ _params = ParamGrid(
     ]
 )
 
-#vstr = "ymaze_noFB_rew_FIXEDd"
+# vstr = "ymaze_noFB_rew_FIXEDd"
 prj = "ymaze_noFB_rew"
 
 base_cli = (
@@ -113,7 +111,7 @@ base_cli = (
     "--save_best_metric=lenweighted_score "
     "--device=cpu "
     "--Hippo_n_feature=16 "
-    "--number_instruction_coef=9 " ## increase if needed
+    "--number_instruction_coef=9 "  ## increase if needed
     "--DG_BN_intercept=2.43 "
     "--depth_sensor=True "
     "--normalize_input=False "
@@ -137,18 +135,9 @@ for cfg in _params.generate_params(False):
     rs = cfg["reward_scale"]
 
     # This becomes the experiment/run name
-    vstr = (
-        f"noFB_FixedRew_{seed}"
-        f"_LR{lr:.0e}"
-        f"_RS{rs:.2g}"
-    )
+    vstr = f"noFB_FixedRew_{seed}" f"_LR{lr:.0e}" f"_RS{rs:.2g}"
 
-    cli = (
-        base_cli
-        + f"--seed={seed} "
-        + f"--learning_rate={lr} "
-        + f"--reward_scale={rs} "
-    )
+    cli = base_cli + f"--seed={seed} " + f"--learning_rate={lr} " + f"--reward_scale={rs} "
 
     # One config per Experiment → one run per config with its own name
     _experiments.append(Experiment(vstr, cli, [cfg]))
@@ -159,11 +148,11 @@ RUN_DESCRIPTION = RunDescription("noFB_FixedRew_LR_RS_seed_grid", experiments=_e
 
 ## DEFAULT ##
 
-#_experiments = [
+# _experiments = [
 #    Experiment(vstr, cli, _params.generate_params(False)),
-#]
+# ]
 
-#RUN_DESCRIPTION = RunDescription(f"{vstr}", experiments=_experiments)
+# RUN_DESCRIPTION = RunDescription(f"{vstr}", experiments=_experiments)
 
 # Run locally: python -m sample_factory.launcher.run --backend=processes --max_parallel=1 --experiments_per_gpu=1 --num_gpus=1 --run=sf_examples.dmlab.experiments.dmlab30
 # Run on Slurm: python -m sample_factory.launcher.run --backend=slurm --slurm_workdir=./slurm_isaacgym --experiment_suffix=slurm --slurm_gpus_per_job=1 --slurm_cpus_per_gpu=16 --slurm_sbatch_template=./template.sh --pause_between=1 --slurm_print_only=False --run=sf_xxl.dmlab.experiments.Hipposlam_batch_run_zeyneptrial

@@ -7,10 +7,10 @@ _params = ParamGrid(
         # -------------------------------------------------
         # Seeds
         ("seed", [1111, 2222, 3333, 4444, 5555]),
-        #("number_instruction_coef", [9, 200]),
-        #("reward_scale", [0.01, 0.1, 1.0]),
+        # ("number_instruction_coef", [9, 200]),
+        # ("reward_scale", [0.01, 0.1, 1.0]),
         ("learning_rate", [0.00002, 0.0001]),
-        #("seed", [2222]),
+        # ("seed", [2222]),
     ]
 )
 
@@ -46,7 +46,6 @@ _params = ParamGrid(
 #         ),
 #     ]
 # )
-
 
 
 vstr = "decoderonly_norew_INSTR"
@@ -100,7 +99,7 @@ cli = (
     "--learning_rate=0.0002 "
     "--fix_encoder_when_load=True "
     # "--encoder_load_path=/home/fr/fr_xl1014/training/best_000025288_203030528_reward_94.185.pth "
-    "--with_wandb=True " # set True to log to wandb, False to log to tensorboard 
+    "--with_wandb=True "  # set True to log to wandb, False to log to tensorboard
     "--wandb_user=xiaoxionglin-bernstein-center-freiburg "
     "--pbt_mix_policies_in_one_env=False "
     "--pbt_target_objective=lenweighted_score "
@@ -108,24 +107,24 @@ cli = (
     "--save_best_metric=lenweighted_score "
     "--device=cpu "
     "--Hippo_n_feature=16 "
-    "--number_instruction_coef=200 " ## increase if needed
+    "--number_instruction_coef=200 "  ## increase if needed
     "--DG_BN_intercept=2.43 "
     "--depth_sensor=True "
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1148 " # default was 1149, 
+    "--rnn_size=1148 "  # default was 1149,
     # "--exploration_loss_coeff=0.005 "
-    # "--value_loss_coeff=0.3 " 
-    #"--ppo_clip_ratio=0.25 " 
+    # "--value_loss_coeff=0.3 "
+    # "--ppo_clip_ratio=0.25 "
     # "--pbt_perturb_max=1.3 "
     # "--pbt_replace_fraction=0.2 "
     "--save_best_every_sec=30 "
     # "--decoder_type=sr_transformer "
     "--oracle_context=True "
-    "--DG_context_mod=None " # BE CAREFUL
-    "--Decoder_context_mod=enter " # BE CAREFUL
-    "--reward_scale=0.01 " ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)
+    "--DG_context_mod=None "  # BE CAREFUL
+    "--Decoder_context_mod=enter "  # BE CAREFUL
+    "--reward_scale=0.01 "  ## ADDED BECAUSE OF TOO HIGH VALUE LOSS (default 1)
 )
 
 _experiments = [

@@ -1,11 +1,17 @@
 import math
+from abc import ABC
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+from sample_factory.algo.utils.torch_utils import calc_num_elements
+from sample_factory.model.decoder import Decoder
+from sample_factory.model.model_utils import ModelModule, create_mlp, nonlinearity
+from sample_factory.utils.typing import Config
 from sample_factory.utils.utils import log
 
 # ---------------------------
@@ -15,16 +21,6 @@ from sample_factory.utils.utils import log
 ##############################################################################
 
 # From jannek.custom_decoder.py #
-
-from abc import ABC
-from typing import List
-
-import torch
-
-from sample_factory.algo.utils.torch_utils import calc_num_elements
-from sample_factory.model.decoder import Decoder
-from sample_factory.model.model_utils import ModelModule, create_mlp, nonlinearity
-from sample_factory.utils.typing import Config
 
 
 class MlpDecoderJit(Decoder):
@@ -45,8 +41,9 @@ class MlpDecoderJit(Decoder):
     def get_out_size(self):
         return self.decoder_out_size
 
+
 ### ADDED Context modulated by FiLM (Feature-wise Linear Modulation)
-# FiLM after MLP 
+# FiLM after MLP
 class MlpDecoderFiLMJit(Decoder):
     def __init__(self, cfg: Config, decoder_input_size: int, context_dim: int = 0):
         super().__init__(cfg)
@@ -54,10 +51,10 @@ class MlpDecoderFiLMJit(Decoder):
         # The total incoming tensor size passed from ActorCritic
         self.core_input_size = decoder_input_size + context_dim
         self.context_dim = context_dim
-        
+
         decoder_layers: List[int] = cfg.decoder_mlp_layers
         activation = nonlinearity(cfg)
-        
+
         # Initialize MLP excluding context
         self.mlp = create_mlp(decoder_layers, decoder_input_size, activation)
         if len(decoder_layers) > 0 and cfg.use_jit:
@@ -65,56 +62,61 @@ class MlpDecoderFiLMJit(Decoder):
         self.decoder_out_size = calc_num_elements(self.mlp, (decoder_input_size,))
 
         if context_dim > 0:
-            self.film_gamma = nn.Linear(context_dim, self.decoder_out_size) #decoder_out_size is equal to 128 
+            self.film_gamma = nn.Linear(context_dim, self.decoder_out_size)  # decoder_out_size is equal to 128
             self.film_beta = nn.Linear(context_dim, self.decoder_out_size)
 
             self.film_gamma.weight.register_hook(
-            lambda grad: log.warning(f"\n[LIVE PROOF] FiLM Gamma Grad Norm: {grad.norm().item():.6f}\n")
-            ) # log gradient from backprop, before optimizer
+                lambda grad: log.warning(f"\n[LIVE PROOF] FiLM Gamma Grad Norm: {grad.norm().item():.6f}\n")
+            )  # log gradient from backprop, before optimizer
 
             # Identity init — gamma=1, beta=0 so FiLM starts as passthrough
             # (film_residual_init from configuration_notes.md)
             nn.init.orthogonal_(self.film_gamma.weight)
-            nn.init.ones_(self.film_gamma.bias)    # gamma starts at 1 
+            nn.init.ones_(self.film_gamma.bias)  # gamma starts at 1
             nn.init.orthogonal_(self.film_beta.weight)
-            nn.init.zeros_(self.film_beta.bias)    # beta starts at 0
-
+            nn.init.zeros_(self.film_beta.bias)  # beta starts at 0
 
     def forward(self, core_output, context=None):
         # Extract bypass context from the concatenated core_output if not explicitly provided
         if self.context_dim > 0 and context is None:
-            x = core_output[:, :self.processed_core_size]
-            context = core_output[:, self.processed_core_size:]
+            x = core_output[:, : self.processed_core_size]
+            context = core_output[:, self.processed_core_size :]
         else:
             x = core_output
 
         # MLP FIRST
         h = self.mlp(x)
-    
+
         if self.context_dim > 0 and context is not None:
 
             if context.shape[0] > 100:  # Only print for the Learner (batch size ~2048)
-                log.warning(f"LEARNER CONTEXT EXACT SUM: {context.sum().item()}") # log batch data being fed into decoder during learning
+                log.warning(
+                    f"LEARNER CONTEXT EXACT SUM: {context.sum().item()}"
+                )  # log batch data being fed into decoder during learning
 
-            gamma = self.film_gamma(context) # it functions as a gate to amplify or silence the input based on the context/mode.
+            gamma = self.film_gamma(
+                context
+            )  # it functions as a gate to amplify or silence the input based on the context/mode.
             beta = self.film_beta(context)
             h = gamma * h + beta
 
-        #print("DID WE USE FILM?", "gamma" in locals())
-        #print("CONTEXT VECTOR:", context[0].detach().cpu().numpy() if context is not None else "NONE")
-            
+        # print("DID WE USE FILM?", "gamma" in locals())
+        # print("CONTEXT VECTOR:", context[0].detach().cpu().numpy() if context is not None else "NONE")
+
         return h
-    
+
     def get_out_size(self):
         return self.decoder_out_size
-    
+
+
 # Additive onto raw CA3 features before MLP, orthogonal init to ensure different contexts push in different directions at start of training
 class MlpDecoderAdditiveJit(Decoder):
     """
     Additive Context Decoder
-    Extracts the bypassed context and additively injects it into the CA3 feature space 
+    Extracts the bypassed context and additively injects it into the CA3 feature space
     using an orthogonally-initialized projection matrix.
     """
+
     def __init__(self, cfg: Config, decoder_input_size: int, context_dim: int = 0):
         super().__init__(cfg)
         self.processed_core_size = decoder_input_size
@@ -133,9 +135,11 @@ class MlpDecoderAdditiveJit(Decoder):
 
         if context_dim > 0:
             # Project the 2D oracle context into the CA3 feature space before MLP
-            self.context_proj = nn.Linear(context_dim, decoder_input_size, bias=False) # this is the shift vector to look up which mode to use for the additive injection.
-            
-            # Orthogonal initialization to ensure the different oracle contexts 
+            self.context_proj = nn.Linear(
+                context_dim, decoder_input_size, bias=False
+            )  # this is the shift vector to look up which mode to use for the additive injection.
+
+            # Orthogonal initialization to ensure the different oracle contexts
             # push the network in distinctly different directions at the start of training.
             nn.init.orthogonal_(self.context_proj.weight)
 
@@ -144,21 +148,22 @@ class MlpDecoderAdditiveJit(Decoder):
     def forward(self, core_output, context=None):
         # Extract bypass context from the concatenated core_output
         if self.context_dim > 0 and context is None:
-            x = core_output[:, :self.processed_core_size]
-            context = core_output[:, self.processed_core_size:]
+            x = core_output[:, : self.processed_core_size]
+            context = core_output[:, self.processed_core_size :]
         else:
             x = core_output
 
         if self.context_dim > 0 and context is not None:
-            # Additive injection: shifts the CA3 features by a learned direction 
+            # Additive injection: shifts the CA3 features by a learned direction
             # before they are processed by the MLP.
             scaled_context = context * self.injection_coef
             x = x + self.context_proj(scaled_context)
 
         return self.mlp(x)
-    
+
     def get_out_size(self):
         return self.decoder_out_size
+
 
 def make_hipposlam_decoder(cfg: Config, core_input_size: int) -> Decoder:
     if cfg.core_name == "BypassSS_HighLevelRNN":
@@ -166,9 +171,11 @@ def make_hipposlam_decoder(cfg: Config, core_input_size: int) -> Decoder:
         # and learned runs. Split exactly those values from the base output.
         context_size = cfg.hl_K
     else:
-        context_size = 2# for 2D oracle context 
-    input_size = core_input_size - context_size # send depth features to MLP like original did. Context instead does additive modulation
-    
+        context_size = 2  # for 2D oracle context
+    input_size = (
+        core_input_size - context_size
+    )  # send depth features to MLP like original did. Context instead does additive modulation
+
     if getattr(cfg, "Decoder_context_mod") == "FiLM":
         log.warning("FiLM context modulation to decoder.")
         return MlpDecoderFiLMJit(cfg, input_size, context_dim=context_size)
@@ -178,6 +185,7 @@ def make_hipposlam_decoder(cfg: Config, core_input_size: int) -> Decoder:
     else:
         log.warning("Standard MLP decoder without context modulation (concatenation).")
         return MlpDecoderJit(cfg, core_input_size)
+
 
 ############################################################################
 

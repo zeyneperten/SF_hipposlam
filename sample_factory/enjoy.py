@@ -64,7 +64,7 @@ def render_frame(cfg, env, video_frames, num_episodes, last_render_start) -> flo
             frame = env.render()
             if frame is not None:
                 if frame.shape[0] == 4:
-                    frame = frame[:3] ## ADDED TO REMOVE DEPTH AND ONLY KEEP RGB
+                    frame = frame[:3]  ## ADDED TO REMOVE DEPTH AND ONLY KEEP RGB
                 video_frames.append(frame.copy())
     else:
         if not cfg.no_render:

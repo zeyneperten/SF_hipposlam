@@ -12,25 +12,25 @@ frames = []
 SCALE = 1.0
 
 # Optional: skip frames if you don't need all of them (1 = every frame, 2 = every 2nd frame)
-STEP = 1  
+STEP = 1
 
 frame_idx = 0
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
         break
-    
+
     if frame_idx % STEP == 0:
         # Convert BGR (OpenCV) to RGB (PIL)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb_frame)
-        
+
         if SCALE != 1.0:
             w, h = pil_img.size
             pil_img = pil_img.resize((int(w * SCALE), int(h * SCALE)), Image.Resampling.LANCZOS)
-            
+
         frames.append(pil_img)
-        
+
     frame_idx += 1
 
 cap.release()
@@ -42,9 +42,9 @@ frames[0].save(
     output_gif,
     save_all=True,
     append_images=frames[1:],
-    duration=100,      # 100ms = 10 FPS (change to 80ms for ~12 FPS, 120ms for ~8 FPS)
+    duration=100,  # 100ms = 10 FPS (change to 80ms for ~12 FPS, 120ms for ~8 FPS)
     loop=0,
-    optimize=True
+    optimize=True,
 )
 
 print(f"Done! Saved: {output_gif}")
