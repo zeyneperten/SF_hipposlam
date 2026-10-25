@@ -7,9 +7,9 @@ _params = ParamGrid(
         # -------------------------------------------------
         # Seeds
         ("seed", [1111, 2222, 3333, 4444, 5555]),
-        ("number_instruction_coef", [9, 200]),
-        ("reward_scale", [0.01, 0.1, 1.0]),
-        ("learning_rate", [0.00002, 0.0001, 0.0002]),
+        ("number_instruction_coef", [200]),
+        ("reward_scale", [0.1]),
+        #("learning_rate", [0.00002, 0.0001, 0.0002]),
         #("seed", [2222]),
     ]
 )
@@ -48,11 +48,11 @@ _params = ParamGrid(
 # )
 
 
-vstr = "sigmoid_norew_INSTR"
-prj = "ymaze_norew_instr"
+vstr = "sig_dec_80_navig_lenweight_4frame"
+prj = "ymaze_August"
 
 cli = (
-    "--env=ymaze_instr "
+    "--env=ymaze_80 "
     f"--wandb_project={prj} "
     "--seed=42 "
     "--train_for_seconds=144000 "
@@ -80,8 +80,8 @@ cli = (
     "--set_workers_cpu_affinity=False "
     "--dmlab_use_level_cache=True "
     "--num_policies=4 "
-    "--pbt_replace_reward_gap=0.01 "
-    "--pbt_replace_reward_gap_absolute=0.15 "
+    "--pbt_replace_reward_gap=0.1 "
+    "--pbt_replace_reward_gap_absolute=5 "
     "--pbt_period_env_steps=2000000 "
     "--pbt_start_mutation=10000000 "
     "--with_pbt=True "
@@ -91,8 +91,9 @@ cli = (
     "--save_every_sec=120 "
     "--save_milestones_sec=5400 "
     "--decoder_mlp_layers 64 64 "
-    "--env_frameskip=8 "
-    "--dmlab_reduced_action_set=True "
+    "--env_frameskip=4 "
+    "--dmlab_reduced_action_set=False "
+    "--dmlab_navigation_action_set=True "
     "--core_name=BypassSS "
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
@@ -112,7 +113,7 @@ cli = (
     "--depth_sensor=True "
     "--normalize_input=False "
     "--Hippo_L=64 "
-    "--rnn_size=1149 "
+    "--rnn_size=1148 "
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 " 
     #"--ppo_clip_ratio=0.25 " 

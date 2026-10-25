@@ -73,6 +73,14 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
     #p.add_argument("--bypass_features", default=False, type=bool, help="Whether to use the bypass features as an additional input to the encoder.")
     ####
     p.add_argument("--depth_sensor", default=False, type=bool, help="having extra depth sensor")
+
+    p.add_argument(
+        "--dmlab_navigation_action_set",
+        default=False,
+        type=str2bool,
+        help="navigation action set to facilitate learning",
+    )
+    
     p.add_argument(
         "--dmlab_reduced_action_set", default=False, type=bool, help="reduced action set to facilitate learning"
     )
