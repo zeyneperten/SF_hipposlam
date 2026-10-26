@@ -6,13 +6,13 @@ _params = ParamGrid(
         # Positional encoding sweep
         # -------------------------------------------------
         # Seeds
-        # ("seed", [1111, 2222, 3333, 4444, 5555]),
+        ("seed", [1111, 2222, 3333, 4444, 5555]),
         # ("number_instruction_coef", [9, 200]),
         # ("reward_scale", [0.01, 0.1, 1.0]),
         # ("learning_rate", [0.00002, 0.0001]),
-        ("seed", [2222]),
+        #("seed", [2222]),
         ("hl_DG_mod", ["sigmoid"]),
-        ("Decoder_context_mod", ["enter", "FiLM"]),
+        ("Decoder_context_mod", ["enter"]),
         ("hl_tau", [0.2, 0.4]),
         # ("context_injection_coef", [1, 9, 200]),
     ]
@@ -70,10 +70,10 @@ _params = ParamGrid(
 # )
 
 prj = "ymaze_HighLevelRNN_v3"
-vstr = "1Q_deterministic"
+vstr = "1oracle_100_lenweight"
 
 cli = (
-    "--env=ymaze_100_final "
+    "--env=ymaze_100_alt2 "
     f"--wandb_project={prj} "
     # "--seed=42 "
     "--train_for_seconds=144000 "
@@ -145,7 +145,7 @@ cli = (
     # "--decoder_type=sr_transformer "
     "--reward_input=False "  # add + 1 to rnn size
     "--DG_context_mod=None "
-    "--oracle_context=False "  # set to true if stage1 HL_RNN will use oracle to fix z
+    "--oracle_context=True "  # set to true if stage1 HL_RNN will use oracle to fix z
     # "--Decoder_context_mod=enter "
     "--hl_K=2 "
     "--hl_d_H=16 "

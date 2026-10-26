@@ -10,7 +10,7 @@ _params = ParamGrid(
         # ("number_instruction_coef", [9, 200]),
         # ("reward_scale", [0.01, 0.1, 1.0]),
         # ("learning_rate", [0.00002, 0.0001]),
-        # ("seed", [2222]),
+        #("seed", [2222]),
         # ("DG_context_mod", ["concat", "sigmoid", "multiply"]),
         # ("Decoder_context_mod", ["additive"]),
         # ("context_injection_coef", [1, 9, 200]),
@@ -69,15 +69,16 @@ _params = ParamGrid(
 # )
 
 prj = "ymaze_HighLevelRNN_v3_100"
-vstr = "oracleZ"
+vstr = "classifier_representation_100"
 
 cli = (
-    "--env=ymaze_hl_100 "
+    "--env=ymaze_100_alt2 "
     f"--wandb_project={prj} "
     # "--seed=42 "
     "--train_for_seconds=144000 "
     "--algo=APPO "
-    "--gamma=0.99 "
+    "--gamma=0.995 " # 0.99 for frameskip 8, 0.995 for frameskip 4
+    "--gae_lambda=0.975 " # 0.95 default for frameskip 8, 0.975 for frameskip 4
     "--use_rnn=True "
     "--num_workers=8 "
     "--num_envs_per_worker=4 "
@@ -100,8 +101,8 @@ cli = (
     "--set_workers_cpu_affinity=False "
     "--dmlab_use_level_cache=True "
     "--num_policies=4 "
-    "--pbt_replace_reward_gap=0.01 "
-    "--pbt_replace_reward_gap_absolute=0.15 "
+    "--pbt_replace_reward_gap=0.1 "
+    "--pbt_replace_reward_gap_absolute=5 "
     "--pbt_period_env_steps=2000000 "
     "--pbt_start_mutation=10000000 "
     "--with_pbt=True "
@@ -128,14 +129,14 @@ cli = (
     "--save_best_metric=lenweighted_score "
     "--device=cpu "
     "--Hippo_n_feature=16 "
-    # "--number_instruction_coef=200 "
+    "--number_instruction_coef=200 "
     "--DG_BN_intercept=2.43 "
     "--depth_sensor=True "
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1342 "  # 1166 base + 8 trial records * (16 pre-event h + 4 mode + reward + valid)
-    # "--exploration_loss_coeff=0.005 "
+    "--rnn_size=1324 "  # (2476 with reps) 1166 base (1146 + 4 + 16) + 8 trial records * (16 pre-event h + 4 mode + reward + valid) = 1342
+    "--exploration_loss_coeff=0.008 "
     # "--value_loss_coeff=0.3 "
     # "--ppo_clip_ratio=0.25 "
     # "--pbt_perturb_max=1.3 "
@@ -144,15 +145,19 @@ cli = (
     # "--decoder_type=sr_transformer "
     "--reward_input=False "  # add + 1 to rnn size
     "--DG_context_mod=None "
-    "--oracle_context=True "  # set to true if stage1 HL_RNN will use oracle to fix z
-    "--Decoder_context_mod=None "
-    "--hl_K=4 "
+    "--oracle_context=False "  # set to true if stage1 HL_RNN will use oracle to fix z
+    "--Decoder_context_mod=enter "
+    "--hl_K=2 "
     "--hl_d_H=16 "
     "--hl_tau=1.0 "  # current behavior; sweep only after checking outcome-reward scale and mode exploration
     "--hl_history_len=8 "
+    "--hl_dg_from_prev_z=True "
+    "--hl_DG_mod=sigmoid "
+    #"--hl_representations=True "
+    #"--hl_d_rep=64 " # size of decoder representation vector per landmark. We have 2 landmarks, so total is 128. base + h + reps + mb + z = 1146 + 16 + 128 + (8*(16 + 2 + 1 + 64 + 64 + 1)=1184) + 2 = 2476
     "--hl_is_policy=False "  # one-step Q regression on the mode that actually earned each trial reward
-    # "--hl_diversity_reward_coef=0.01 " # at most 0.01 per completed trial, for controller PPO only
-    # "--hl_diversity_include_chosen_arm=True " # include the chosen arm in the classifier input for levels that return to an identical center view at outcome
+    "--hl_diversity_reward_coef=0.01 " # at most 0.01 per completed trial, for controller PPO only
+    "--hl_diversity_include_chosen_arm=True " # include the chosen arm in the classifier input for levels that return to an identical center view at outcome
     "--reward_scale=0.1 "  # default 1 LOWERED BECAUSE OF TOO HIGH VALUE LOSS
     # "--context_injection_coef=200 "
 )

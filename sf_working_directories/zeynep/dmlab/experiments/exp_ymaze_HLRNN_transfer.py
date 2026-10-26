@@ -70,10 +70,10 @@ _params = ParamGrid(
 # )
 
 prj = "ymaze_HighLevelRNN_transfer"
-vstr = "sig_from_ENCDECproj_87"
+vstr = "sig_from_NEWymaze_14"
 
 cli = (
-    "--env=ymaze_instr_hl "
+    "--env=ymaze_80 "
     f"--wandb_project={prj} "
     # "--seed=42 "
     "--train_for_seconds=144000 "
@@ -89,7 +89,7 @@ cli = (
     "--batch_size=2048 "
     "--num_batches_per_epoch=2 "
     "--benchmark=False "
-    "--max_grad_norm=1.0 "  # TRY 1 BECAUSE OF GRADIENT EXPLOSION WITH LORA, try default 0.0 for HL
+    "--max_grad_norm=0.0 "  # TRY 1 BECAUSE OF GRADIENT EXPLOSION WITH LORA, try default 0.0 for HL
     "--dmlab_renderer=software "
     "--decorrelate_experience_max_seconds=120 "
     "--nonlinearity=relu "
@@ -129,7 +129,7 @@ cli = (
     "--save_best_metric=lenweighted_score "
     "--device=cpu "
     "--Hippo_n_feature=16 "
-    # "--number_instruction_coef=200 "
+    "--number_instruction_coef=200 "
     "--DG_BN_intercept=2.43 "
     "--depth_sensor=True "
     "--normalize_input=False "
@@ -157,9 +157,10 @@ cli = (
     "--reward_scale=0.1 "  # default 1 LOWERED BECAUSE OF TOO HIGH VALUE LOSS
     # "--context_injection_coef=200 "
     "--hl_DG_mod=sigmoid "
-    "--oracle_init_checkpoint=/work/classic/fr_ze12-data/ymaze_CTRL/norew_INSTR/new_modulate/sigmoid_run2_grid/train_dir/sigmoid_norew_INSTR/sigmoid_norew_INSTR_/87_sigmoid_norew_INSTR_see_5555_n.i.coe_200_r.sca_1.0_l.rat_2e-05/checkpoint_p0/checkpoint_000014684_215220224.pth "
+    "--oracle_freeze_controller=True "
+    "--hl_dg_from_prev_z=True "
+    "--oracle_init_checkpoint=/work/classic/fr_ze12-data/ymaze_CTRL/norew_INSTR/new_modulate/sigmoid_run2_grid/train_dir/sigmoid_norew_INSTR/sigmoid_norew_INSTR_/14_sigmoid_norew_INSTR_see_1111_n.i.coe_200_r.sca_0.1_l.rat_0.0002/checkpoint_p0/checkpoint_000015380_222494720.pth "
 )
-
 
 _experiments = []
 

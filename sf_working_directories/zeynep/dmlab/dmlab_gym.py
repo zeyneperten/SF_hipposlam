@@ -374,7 +374,7 @@ class DmlabGymEnv_custom(gym.Env):
             "inst_block",
         ]  #'outcome_event', 'prev_trial_reward', 'chosen_arm'
 
-        observation_format += ["outcome_event", "prev_trial_reward", "inst_block", "chosen_arm", "chosen_arm_pulse"]
+        #observation_format += ["outcome_event", "prev_trial_reward", "inst_block", "chosen_arm", "chosen_arm_pulse"]
 
         self.reward_input = reward_input
         if not self.reward_input:
@@ -417,7 +417,7 @@ class DmlabGymEnv_custom(gym.Env):
         self.high_level = high_level
         if self.high_level:
             log.warning("HighLevel mode is enabled for this environment!")
-            # observation_format += ["outcome_event", "prev_trial_reward", "inst_block", "chosen_arm", "chosen_arm_pulse"]
+            observation_format += ["outcome_event", "prev_trial_reward", "inst_block", "chosen_arm", "chosen_arm_pulse"]
 
         self.render_mode: Optional[str] = render_mode
 
@@ -724,11 +724,11 @@ class DmlabGymEnv_custom(gym.Env):
             info["episode_extra_stats"]["custom/lowrew_hit"] = self._total_lo_hit
             info["episode_extra_stats"]["custom/lowrew_miss"] = self._total_lo_miss
 
-            total_correct = self._total_hi_hit + self._total_lo_hit
-            total_incorrect = self._total_hi_miss + self._total_lo_miss
-            total_trials = total_correct + total_incorrect
+            total_highchoice = self._total_hi_hit + self._total_hi_miss
+            total_lowchoice = self._total_lo_hit + self._total_lo_miss
+            total_trials = total_highchoice + total_lowchoice
             info["episode_extra_stats"]["custom/arm_obedience"] = (
-                total_correct / total_trials if total_trials > 0 else 0.0
+                total_highchoice / total_trials if total_trials > 0 else 0.0
             )
 
             info["episode_extra_stats"]["custom/R_trials"] = self._R_trials

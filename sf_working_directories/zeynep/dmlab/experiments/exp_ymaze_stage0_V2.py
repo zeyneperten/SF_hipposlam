@@ -11,7 +11,7 @@ _params = ParamGrid(
         # ("reward_scale", [0.01, 0.1, 1.0]),
         # ("learning_rate", [0.00002, 0.0001]),
         ("DG_context_mod", ["sigmoid"]),  # verify rnn_size
-        ("Decoder_context_mod", ["enter", "FiLM"]),  # verify rnn_size
+        ("Decoder_context_mod", ["enter"]),  # verify rnn_size
         # ("seed", [2222]),
         # ("context_injection_coef", [1, 200]),
     ]
@@ -51,11 +51,11 @@ _params = ParamGrid(
 # )
 
 
-vstr = "1deterministic_Rew"
+vstr = "2_80_trigRew"
 prj = "ymaze_stage0_oracle_v2"
 
 cli = (
-    "--env=ymaze_100_alt2 "  # hl_100_alt has 100% reward alternating always, BUGS FIXED: ymaze_100_alt2 has 100% reward alternating always, ymaze_80 has 80% reward alternating (19.10.26)
+    "--env=ymaze_80 "  # hl_100_alt has 100% reward alternating always, BUGS FIXED: ymaze_100_alt2 has 100% reward alternating always, ymaze_80 has 80% reward alternating (19.10.26)
     f"--wandb_project={prj} "
     # "--seed=42 "
     "--train_for_seconds=144000 "
@@ -83,8 +83,8 @@ cli = (
     "--set_workers_cpu_affinity=False "
     "--dmlab_use_level_cache=True "
     "--num_policies=4 "
-    "--pbt_replace_reward_gap=0.01 "
-    "--pbt_replace_reward_gap_absolute=0.15 "
+    "--pbt_replace_reward_gap=0.1 " # change it ?
+    "--pbt_replace_reward_gap_absolute=5 " #default was 0.15
     "--pbt_period_env_steps=2000000 "
     "--pbt_start_mutation=10000000 "
     "--with_pbt=True "
@@ -100,7 +100,7 @@ cli = (
     "--core_name=BypassSS "
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
-    # "--learning_rate=0.0002 "
+    "--learning_rate=0.0002 "
     "--fix_encoder_when_load=True "
     # "--encoder_load_path=/home/fr/fr_xl1014/training/best_000025288_203030528_reward_94.185.pth "
     "--with_wandb=True "  # set True to log to wandb, False to log to tensorboard
@@ -117,7 +117,7 @@ cli = (
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1148 "  # (16 * (64 + 8-1)) + (10 depth) + 2 ADD 2 ONLY IF BYPASS TO DECODER 1148
+    "--rnn_size=1148 "  # (16 * (64 + 8-1)) + (10 depth) + 2 ADD 2 ONLY IF BYPASS TO DECODER 1149
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 "
     # "--ppo_clip_ratio=0.25 "

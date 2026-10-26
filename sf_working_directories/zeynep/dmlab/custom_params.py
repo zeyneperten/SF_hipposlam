@@ -81,7 +81,7 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         "--Decoder_context_mod",
         default="None",
         type=str,
-        choices=["None", "enter", "FiLM", "additive"],
+        choices=["None", "enter", "ortho", "FiLM", "additive"],
         help="Whether to use context modulation in the decoder layer.",
     )
     p.add_argument(
@@ -114,6 +114,8 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         type=str2bool,
         help="Use the preceding latched high-level mode as the encoder's DG context.",
     )
+    p.add_argument("--decoder_orth_loss_coeff", default=1.0, type=float, help="Coefficient for orthogonality loss in the decoder. If 0, no loss.")
+
     ##       Context Inference Module        ##
     p.add_argument("--context_hidden_size", default=6, type=int, help="Hidden size of the context RNN.")
     p.add_argument(
@@ -184,16 +186,15 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         help="Coefficient for scaling the context vector before injection into the decoder.",
     )
+    p.add_argument("--hl_representations", default=False, type=str2bool, help="Whether to use decoder representations in HLs.")
+    p.add_argument("--hl_d_rep", default=64, type=int, help="Dimension of the high-level representation vector.")
     ## 11.10.2026 ADDED High Level mode → DG modulation ##
     p.add_argument(
         "--hl_DG_mod",
         default="None",
         type=str,
         choices=["None", "multiply", "sigmoid", "concat"],
-        help="How the high-level mode vector modulates DG projection. "
-        "'multiply' = inside DG between linear and batchnorm; "
-        "'sigmoid' = post-DG gating via sigmoid(embed(z)); "
-        "'concat' = concatenate mode vector with visual features before DG projection.",
+        help="How the high-level mode vector modulates DG projection. ",
     )
     ###################
 

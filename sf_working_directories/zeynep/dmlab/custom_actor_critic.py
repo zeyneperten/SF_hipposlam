@@ -39,6 +39,10 @@ def HighLevel_LossWrapper(actor_critic: ActorCritic) -> ActorCritic:
     original_forward = actor_critic.forward
     original_summaries = actor_critic.summaries
 
+    core = getattr(actor_critic, "core", getattr(actor_critic, "actor_core", None))
+    if core is not None and hasattr(core, "set_decoder"):
+        core.set_decoder(actor_critic.decoder)  # Pass the decoder to the core for high-level RNN
+
     def custom_forward(*args, **kwargs):
         core = getattr(actor_critic, "core", getattr(actor_critic, "actor_core", None))
         # Value bootstrap must follow the same mode policy as acting. A greedy
@@ -51,8 +55,8 @@ def HighLevel_LossWrapper(actor_critic: ActorCritic) -> ActorCritic:
         previous_deterministic = (
             selector.deterministic if selector is not None else None
         )  # PPO guesses the value of next state (bootstrapping). Force deterministic only during value-guessing step to keep math clean.
-        if selector is not None and values_only:
-            selector.deterministic = True  # When passed the 64 rollout frames, make a guess and bypass the sampling of high-level mode. This is only for bootstrapping the value function, not for training the high-level RNN.
+        #if selector is not None and values_only:
+            #selector.deterministic = True  # When passed the 64 rollout frames, make a guess and bypass the sampling of high-level mode. This is only for bootstrapping the value function, not for training the high-level RNN.
 
         ## 11.10.2026 ADDED: propagate latched mode z_prev to encoder before forward_head ##
         if getattr(actor_critic.cfg, "core_name", None) == "BypassSS_HighLevelRNN":
@@ -123,6 +127,9 @@ def HighLevel_LossWrapper(actor_critic: ActorCritic) -> ActorCritic:
 def make_hipposlam_actor_critic(cfg, obs_space, action_space) -> ActorCritic:
     # Use Sample Factory's default creation logic
     actor_critic = default_make_actor_critic_func(cfg, obs_space, action_space)
+
+    if hasattr(actor_critic.decoder, "init_film_identity"):
+        actor_critic.decoder.init_film_identity()
 
     if getattr(cfg, "oracle_init_checkpoint", None) and getattr(cfg, "oracle_freeze_controller", True):
         frozen = (

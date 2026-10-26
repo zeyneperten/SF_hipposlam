@@ -47,7 +47,7 @@ def _ensure_parent(path: pathlib.Path):
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-mapname = "ymaze_instr"
+mapname = "ymaze_instr_hl"
 
 # ---------------------------------------------------------------------------
 # 20 target experiments (4 setups x 5 seeds)
@@ -219,22 +219,22 @@ experiments = [
     },
 ]
 
-experiments = [
+experiments_bad = [
     {
-        "expname": "42_noINSTR_see_5555_r.sca_1.0_l.rat_2e-05",
-        "train_dir": "/work/classic/fr_ze12-data/ymaze_CTRL/noINSTR/run2_grid/train_dir/noINSTR/noINSTR_",
-        "DG_context_mod": "None",
-        "Decoder_context_mod": "None",
-        "reward_scale": "1.0",
+        "expname": "30_sigmoid_norew_INSTR_see_2222_n.i.coe_200_r.sca_0.1_l.rat_2e-05",
+        "train_dir": "/work/classic/fr_ze12-data/ymaze_CTRL/norew_INSTR/new_modulate/sigmoid_run2_grid/train_dir/sigmoid_norew_INSTR/sigmoid_norew_INSTR_",
+        "DG_context_mod": "sigmoid",
+        "Decoder_context_mod": "enter",
+        "reward_scale": "0.1",
         "learning_rate": "0.00002",
     }
 ]
 
 
 # Separate directory to save all telemetry results (outside the checkpoint folder)
-output_telemetry_dir = "/work/classic/fr_ze12-data2/telemetry_plots"
+output_telemetry_dir = "/work/classic/fr_ze12-data2/outputs/telemetry_plots/bad"
 
-for exp_info in experiments:
+for exp_info in experiments_bad:
     expname = exp_info["expname"]
     train_dir = exp_info["train_dir"]
     dg_context_mod = exp_info.get("DG_context_mod", "sigmoid")
@@ -286,13 +286,15 @@ for exp_info in experiments:
         "--Decoder_context_mod",
         decoder_context_mod,
         "--rnn_size",
-        "1146",
+        "1148",
         "--core_name",
         "BypassSS",
         "--reward_scale",
         str(reward_scale),
         "--learning_rate",
         str(learning_rate),
+        #"--hl_K", "4",
+        #"--hl_d_H", "16"
     ]
 
     cli_dict = {
@@ -311,7 +313,9 @@ for exp_info in experiments:
         "oracle_context": True,
         "DG_context_mod": dg_context_mod,
         "Decoder_context_mod": decoder_context_mod,
-        "rnn_size": 1146,
+        #"hl_K": "4",
+        #"hl_d_H": "16",
+        "rnn_size": 1148,
         "core_name": "BypassSS",
         "reward_scale": float(reward_scale),
         "learning_rate": float(learning_rate),

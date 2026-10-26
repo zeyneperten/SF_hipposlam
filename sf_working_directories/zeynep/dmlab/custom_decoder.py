@@ -41,67 +41,104 @@ class MlpDecoderJit(Decoder):
     def get_out_size(self):
         return self.decoder_out_size
 
+class MlpDecoderOrthogonalJit(Decoder):
+    def __init__(self, cfg: Config, decoder_input_size: int, context_dim: int = 0):
+        super().__init__(cfg)
+        self.core_input_size = decoder_input_size
+        self.context_dim = context_dim
+
+        decoder_layers: List[int] = cfg.decoder_mlp_layers
+        activation = nonlinearity(cfg)
+
+        self.mlp = create_mlp(decoder_layers, decoder_input_size, activation)
+        self.first_linear = self.mlp[0]
+
+        if self.context_dim > 1:
+            with torch.no_grad():
+                # Makes the context columns mutually perpendicular
+                nn.init_orthogonal_(self.first_linear.weight[:,-self.context_dim:], gain=1.0)
+
+        if len(decoder_layers) > 0 and cfg.use_jit:
+            self.mlp = torch.jit.script(self.mlp)
+
+        self.decoder_out_size = calc_num_elements(self.mlp, (decoder_input_size,))
+
+    def forward(self, core_output):
+        return self.mlp(core_output)
+
+    def get_orthogonality_loss(self) -> torch.Tensor:
+        """
+        Computes the off-diagonal Frobenius penalty of the cosine similarity matrix
+        for the context columns. Returns 0 if vectors are perfectly perpendicular.
+        """
+        if self.context_dim <= 1:
+            return torch.tensor(0.0, device=self.first_linear.weight.device)
+        # 1. Extract context columns: shape (hidden_dim, K) -> (128, 4)
+        W_ctx = self.first_linear.weight[:, -self.context_dim:]
+        # 2. Normalize columns to unit vectors (to measure pure angles / cosine similarity)
+        W_norm = F.normalize(W_ctx, p=2, dim=0)
+        # 3. Compute Gram / Cosine similarity matrix: shape (K, K)
+        # G[i, j] = cos(angle between mode i and mode j)
+        gram = torch.matmul(W_norm.t(), W_norm)
+        # 4. We want off-diagonal elements to be 0 (perpendicular, cos = 0)
+        identity = torch.eye(self.context_dim, device=gram.device)
+        diff = gram - identity
+        # Normalized average squared off-diagonal cosine similarity
+        K = self.context_dim
+        orth_loss = (diff ** 2).sum() / (K * (K - 1))
+        return orth_loss
+
+    def get_out_size(self):
+        return self.decoder_out_size
+
 
 ### ADDED Context modulated by FiLM (Feature-wise Linear Modulation)
-# FiLM after MLP
+# FiLM after MLP 
+# 26.10.26
 class MlpDecoderFiLMJit(Decoder):
     def __init__(self, cfg: Config, decoder_input_size: int, context_dim: int = 0):
         super().__init__(cfg)
         self.processed_core_size = decoder_input_size
-        # The total incoming tensor size passed from ActorCritic
         self.core_input_size = decoder_input_size + context_dim
         self.context_dim = context_dim
 
         decoder_layers: List[int] = cfg.decoder_mlp_layers
         activation = nonlinearity(cfg)
 
-        # Initialize MLP excluding context
         self.mlp = create_mlp(decoder_layers, decoder_input_size, activation)
         if len(decoder_layers) > 0 and cfg.use_jit:
             self.mlp = torch.jit.script(self.mlp)
         self.decoder_out_size = calc_num_elements(self.mlp, (decoder_input_size,))
 
         if context_dim > 0:
-            self.film_gamma = nn.Linear(context_dim, self.decoder_out_size)  # decoder_out_size is equal to 128
+            self.film_gamma = nn.Linear(context_dim, self.decoder_out_size)
             self.film_beta = nn.Linear(context_dim, self.decoder_out_size)
 
-            self.film_gamma.weight.register_hook(
-                lambda grad: log.warning(f"\n[LIVE PROOF] FiLM Gamma Grad Norm: {grad.norm().item():.6f}\n")
-            )  # log gradient from backprop, before optimizer
+            # Both start at 0 so residual (1.0 + gamma) starts at 1.0
+            self.init_film_identity()
 
-            # Identity init — gamma=1, beta=0 so FiLM starts as passthrough
-            # (film_residual_init from configuration_notes.md)
-            nn.init.orthogonal_(self.film_gamma.weight)
-            nn.init.ones_(self.film_gamma.bias)  # gamma starts at 1
-            nn.init.orthogonal_(self.film_beta.weight)
-            nn.init.zeros_(self.film_beta.bias)  # beta starts at 0
+    def init_film_identity(self):
+        """Zero-init weights and bias so gamma starts at 1 (via 1.0 + gamma) and beta at 0."""
+        if self.context_dim > 0:
+            nn.init.zeros_(self.film_gamma.weight)
+            nn.init.zeros_(self.film_gamma.bias)
+            nn.init.zeros_(self.film_beta.weight)
+            nn.init.zeros_(self.film_beta.bias)
 
     def forward(self, core_output, context=None):
-        # Extract bypass context from the concatenated core_output if not explicitly provided
         if self.context_dim > 0 and context is None:
             x = core_output[:, : self.processed_core_size]
             context = core_output[:, self.processed_core_size :]
         else:
             x = core_output
 
-        # MLP FIRST
         h = self.mlp(x)
 
         if self.context_dim > 0 and context is not None:
-
-            if context.shape[0] > 100:  # Only print for the Learner (batch size ~2048)
-                log.warning(
-                    f"LEARNER CONTEXT EXACT SUM: {context.sum().item()}"
-                )  # log batch data being fed into decoder during learning
-
-            gamma = self.film_gamma(
-                context
-            )  # it functions as a gate to amplify or silence the input based on the context/mode.
+            # Residual FiLM: starts at exactly 1.0 * h + 0.0
+            gamma = 1.0 + self.film_gamma(context)
             beta = self.film_beta(context)
             h = gamma * h + beta
-
-        # print("DID WE USE FILM?", "gamma" in locals())
-        # print("CONTEXT VECTOR:", context[0].detach().cpu().numpy() if context is not None else "NONE")
 
         return h
 
@@ -182,6 +219,9 @@ def make_hipposlam_decoder(cfg: Config, core_input_size: int) -> Decoder:
     elif getattr(cfg, "Decoder_context_mod") == "additive":
         log.warning("Additive context modulation to decoder.")
         return MlpDecoderAdditiveJit(cfg, input_size, context_dim=context_size)
+    elif getattr(cfg, "Decoder_context_mod") == "ortho":
+        log.warning("Orthogonal context weights in decoder with standard MLP.")
+        return MlpDecoderOrthogonalJit(cfg, input_size, context_dim=context_size)
     else:
         log.warning("Standard MLP decoder without context modulation (concatenation).")
         return MlpDecoderJit(cfg, core_input_size)

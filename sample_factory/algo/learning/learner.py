@@ -1050,7 +1050,18 @@ class DefaultLearner(BaseLearner):
             loss_summaries["hl/diversity_classifier_accuracy"] = accuracy
             loss_summaries["hl/diversity_bonus_mean"] = mb.hl_diversity_bonus.mean().item()
 
-        return action_distribution, policy_loss, exploration_loss, kl_old, kl_loss, value_loss, hl_loss, loss_summaries
+
+        ### ADDED 23.10.26 Deconer Context Orthogonality loss
+        decoder = getattr(self.actor_critic, "decoder", None)
+        orth_coef = getattr(self.cfg, "decoder_orth_loss_coeff", 0.0)
+        orth_loss = torch.tensor(0.0, device=self.device)
+
+
+        if hasattr(decoder, "get_orthogonality_loss"):
+            orth_loss = decoder.get_orthogonality_loss() * orth_coef
+            loss_summaries["decoder/orthogonality_loss"] = orth_loss.detach()
+
+        return action_distribution, policy_loss, exploration_loss, kl_old, kl_loss, value_loss, hl_loss, orth_loss, loss_summaries
 
     def _train(
         self, gpu_buffer: TensorDict, batch_size: int, experience_size: int, num_invalids: int
@@ -1115,12 +1126,13 @@ class DefaultLearner(BaseLearner):
                         kl_loss,
                         value_loss,
                         hl_loss,
+                        orth_loss,
                         loss_summaries,
                     ) = self._calculate_losses(mb, num_invalids)
 
                 with timing.add_time("losses_postprocess"):
                     # noinspection PyTypeChecker
-                    actor_loss: Tensor = policy_loss + exploration_loss + kl_loss + hl_loss
+                    actor_loss: Tensor = policy_loss + exploration_loss + kl_loss + hl_loss + orth_loss
                     critic_loss = value_loss
                     loss: Tensor = actor_loss + critic_loss
 
@@ -1128,7 +1140,7 @@ class DefaultLearner(BaseLearner):
 
                     ## ADDED 01.10 TO LOG, comment out later ##
                     log.info(
-                        "Batch %d | Total Loss: %.4f | HL-Loss: %.4f", batch_num, to_scalar(loss), to_scalar(hl_loss)
+                        "Batch %d | Total Loss: %.4f | HL-Loss: %.4f | Orth-Loss: %.4f", batch_num, to_scalar(loss), to_scalar(hl_loss), to_scalar(orth_loss)
                     )
 
                     high_loss = 30.0
@@ -1141,6 +1153,7 @@ class DefaultLearner(BaseLearner):
                             to_scalar(exploration_loss),
                             to_scalar(kl_loss),
                             to_scalar(hl_loss),
+                            to_scalar(orth_loss)
                         )
 
                         # perhaps something weird is happening, we definitely want summaries from this step

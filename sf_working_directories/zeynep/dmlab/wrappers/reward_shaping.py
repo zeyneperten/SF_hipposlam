@@ -80,8 +80,10 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
             info["episode_extra_stats"][f"{level_name_key}_{RAW_SCORE_SUMMARY_KEY_SUFFIX}"] = score
             info["episode_extra_stats"][f"{level_name_key}_len"] = self.episode_length
             info["episode_extra_stats"][f"{level_name_key}_lenweighted_score"] = (
-                (10000 - self.episode_length) / 10000 * score
+                (250000 - self.episode_length) / 250000 * score
             )
+            info["episode_extra_stats"]["lenweighted_score"] = (250000 - self.episode_length) / 250000 * score
+            info["episode_extra_stats"]["raw_score"] = score
 
             ## ADDED ##
             # log.warning(
@@ -89,10 +91,10 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
             #    self.hi_hit_count, self.hi_miss_count, self.lo_hit_count, self.lo_miss_count
             # )
 
-            info["episode_extra_stats"]["custom/highrew_hit"] = float(self.hi_hit_count)
-            info["episode_extra_stats"]["custom/highrew_miss"] = float(self.hi_miss_count)
-            info["episode_extra_stats"]["custom/lowrew_hit"] = float(self.lo_hit_count)
-            info["episode_extra_stats"]["custom/lowrew_miss"] = float(self.lo_miss_count)
+            #info["episode_extra_stats"]["custom/highrew_hit"] = float(self.hi_hit_count)
+            #info["episode_extra_stats"]["custom/highrew_miss"] = float(self.hi_miss_count)
+            #info["episode_extra_stats"]["custom/lowrew_hit"] = float(self.lo_hit_count)
+            #info["episode_extra_stats"]["custom/lowrew_miss"] = float(self.lo_miss_count)
 
             # info["episode_extra_stats"]["custom/flexibility"] = existing_extra_stats.get("custom/flexibility", 0.0)
             # info["episode_extra_stats"]["custom/instr_switch"] = existing_extra_stats.get("custom/instr_switch", 1)

@@ -92,7 +92,7 @@ def maybe_overwrite_rnn_size(cfg):
         R = getattr(cfg, "Hippo_R", 8)
         L = getattr(cfg, "Hippo_L", 48)
         hippo_n_feature = getattr(cfg, "Hippo_n_feature", 64)
-        rnn_size = hippo_n_feature * (R + L - 1) + 12  # 10 depth + 2 instruction features
+        rnn_size = hippo_n_feature * (R + L - 1) + 12  # 10 depth + 2 instruction features, + 3 was before
         cfg.cli_args["rnn_size"] = rnn_size
         cfg.rnn_size = rnn_size
 
@@ -110,7 +110,7 @@ def parse_dmlab_args(argv=None, evaluation=False):
         has_target_checkpoint = cfg.restart_behavior == "resume" and any(target_dir.glob("checkpoint_p*/*.pth"))
         if not has_target_checkpoint:
             prepare_oracle_transfer(cfg)
-    # maybe_overwrite_rnn_size(cfg)
+    #maybe_overwrite_rnn_size(cfg)
     return cfg
 
 

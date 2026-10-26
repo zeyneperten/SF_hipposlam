@@ -783,9 +783,10 @@ class HighLevelRNNWrapperCore(ModelCore):
         if not is_bptt:
             # === INFERENCE PASS ===
             if self.oracle:
-                base_head_output = head_output[:, :-4]
+                base_head_output = head_output[:, :-5]
                 # didnt add chosen_arm_pulse in encoder, add and fix here
-                inst_block = head_output[:, -4].long()
+                inst_block = head_output[:, -5].long()
+                chosen_arm_pulse = head_output[:, -4].long()
                 chosen_arm = head_output[:, -3].long()
                 outcome_mask = head_output[:, -2].bool()
                 prev_trial_reward = head_output[:, -1]
@@ -793,6 +794,8 @@ class HighLevelRNNWrapperCore(ModelCore):
                 h_high_new, z_new = self.high_level_rnn_stage1(
                     outcome_mask, prev_trial_reward, h_high_prev, z_prev, inst_block
                 )
+                history_new = history_prev
+
             else:
                 base_head_output = head_output[:, :-4]
                 chosen_arm_pulse = head_output[:, -4].long()
@@ -815,11 +818,14 @@ class HighLevelRNNWrapperCore(ModelCore):
 
             base_core_out, base_states_new = self.base_core(base_head_output, base_states)
 
-            out_total = torch.cat([base_core_out, z_new], dim=-1)
+            coef = getattr(self.cfg, "number_instruction_coef", 200.0)
+
+            out_total = torch.cat([base_core_out, z_new * coef], dim=-1)
 
             if self.representations:
+                core_features = out_total[:,: self.decoder.processed_core_size] if hasattr(self.decoder, "processed_core_size") else out_total
                 h_dec_1 = self.decoder.mlp[0](
-                    out_total
+                    core_features
                 ).detach()  # current representation of the decoder's first layer, used for updating the event representations
 
                 is_endpoint = chosen_arm_pulse > 0
@@ -872,8 +878,10 @@ class HighLevelRNNWrapperCore(ModelCore):
 
             for t in range(T):
                 if self.oracle:
-                    base_head_output_t = head_output[t, :, :-4]
-                    inst_block_t = head_output[t, :, -4].long()
+                    base_head_output_t = head_output[t, :, :-5]
+                    inst_block_t = head_output[t, :, -5].long()
+                    chosen_arm_pulse_t = head_output[t, :, -4].long()
+                    chosen_arm_t = head_output[t, :, -3].long()
                     outcome_mask_t = head_output[t, :, -2].bool()
                     prev_trial_reward_t = head_output[t, :, -1]
 
@@ -921,7 +929,9 @@ class HighLevelRNNWrapperCore(ModelCore):
 
                 base_core_out_t, base_states_t = self.base_core(base_head_output_t, base_states_t)
 
-                out_total_t = torch.cat([base_core_out_t, z_t], dim=-1)
+                coef = getattr(self.cfg, "number_instruction_coef", 200.0)
+
+                out_total_t = torch.cat([base_core_out_t, z_t * coef], dim=-1)
 
                 if self.representations:
                     h_dec_1_t = self.decoder.mlp[0](out_total_t).detach()
