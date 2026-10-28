@@ -1,7 +1,8 @@
 # Standalone high-level RNN bandit
 
 This setup asks whether the existing high-level RNN can infer changing reward
-contingencies when every selected mode reliably executes one arm choice. It
+contingencies when every selected mode commands one arm choice, with configurable
+execution reliability. It
 removes vision, DG, CA3, the motor decoder, navigation, PPO, PBT, and the simulator.
 It reuses `HighLevelContextRNN_Learner`, the full core's trial-history replay,
 and the existing Q-regression or policy-gradient loss. PyTorch and NumPy are
@@ -33,6 +34,7 @@ Defaults match the transfer launcher and `ymaze_80_final.lua` at base revision
 | Optimizer | Adam, learning rate 0.0002, epsilon 0.000001, gradient clipping 1 |
 | Q sampling | Softmax, temperature 1 |
 | Task | 80% versus 20% reward; right arm initially high |
+| Actuator | 100% command success by default; `--actuator-success-rate 0.8` for 20% wrong-arm choices |
 | Schedule | 15 trials per nominal block; 0.66 probability of reversing at a boundary |
 | Session | 5 nominal blocks; memory resets after 75 outcomes |
 
@@ -43,10 +45,29 @@ contingency unchanged. Reward uses the Lua task's complementary winning-arm
 lottery for the default 80/20 pair; the manager's target is 0/1, independent of
 the maze's +10 game score and low-level `reward_scale`.
 
-Mode 0 executes left and mode 1 right by default. `--mode-to-arm 1 0` reverses
-that convention. This is a perfect actuator assumption for the diagnostic;
-it neither supervises a worker nor establishes learned mode meanings in the
-full system. There are no failures to initiate, reach an endpoint, or return.
+Mode 0 commands left and mode 1 right by default. `--mode-to-arm 1 0` reverses
+that convention. Each completed trial independently executes the commanded arm
+with probability `--actuator-success-rate` and the opposite arm otherwise.
+Reward follows the executed arm. The RNN receives its **commanded mode and
+observed reward**, never the executed arm or failure flag. This assumption
+neither supervises a worker nor establishes learned mode meanings in the full
+system. There are no failures to initiate, reach an endpoint, or return.
+
+For the requested 80% actuator condition:
+
+```bash
+python -m sf_working_directories.zeynep.bandit.train \
+  --output train_dir/hl_bandit/actuator80_seed7 --seed 7 \
+  --actuator-success-rate 0.8 --eval-sessions 128 --eval-every 100
+```
+
+With default reward probabilities, commanding the better arm earns reward with
+probability $0.8(0.8)+0.2(0.2)=0.68$; commanding the worse arm earns reward with
+probability $0.8(0.2)+0.2(0.8)=0.32$. Thus an oracle with perfect context knowledge
+executes the better arm 80% of the time and earns 0.68 expected reward. Because
+execution is unobserved, the RNN sees a bandit with effective command rewards
+68/32. A slower switch response can therefore reflect weaker outcome evidence.
+It does not by itself establish a distinct motor-specific learning deficit.
 
 ## Controls and evaluation
 
@@ -77,7 +98,10 @@ for policy checkpoints. No alternative critic or supervised block target is adde
 
 Every run evaluates **sampled** and **greedy** policies in separate closed-loop
 sessions, along with greedy memory reset, random, win-stay/lose-shift, and an
-oracle better-arm reference. The oracle alone reads the hidden contingency.
+oracle reference. All policies use the same actuator. Win-stay/lose-shift uses
+the previous commanded arm and reward, without observing execution errors.
+The oracle alone reads the hidden contingency and chooses the command with the
+highest expected reward (inverting commands if actuator success is below 50%).
 Memory reset restores the same initial-trigger state before every choice,
 removing both recent outcome input and accumulated recurrent history. It is a
 memory-use diagnostic, not a separately trained memoryless baseline.
@@ -88,13 +112,22 @@ context knowledge. Its expected reward is about 0.588. This is a calibrated-Q
 reference, not a hard bound on an imperfect model's logits, and does not mean
 the hidden context can actually be known before observing post-switch evidence.
 Greedy accuracy and the sampled-versus-greedy gap therefore answer different questions.
+With 80% actuator success, calibrated Q-values become 0.68 and 0.32. At
+temperature 1 this yields about 58.9% better-arm commands, 55.3% better-arm
+executions, and 0.532 expected reward, even with known context.
 
 Validation uses held-out sessions at fixed checkpoints, with seed `seed+1000000`.
 The final frozen test uses `--test-seed` (default 2000007), independently of
 training and validation. Final results always use the last checkpoint; no best
 test checkpoint is selected. Evaluation preserves the training RNG and weights.
 Policies share environmental random streams within an evaluation. Their choices
-can generate different observed rewards.
+can generate different observed rewards. A separate actuator RNG preserves the
+reward/switch stream across reliability conditions and the original default
+trajectories. Training and evaluation actuator rates are task settings, so a
+checkpoint can be evaluated with a different `--actuator-success-rate`.
+Evaluation uses CLI task settings, not saved training task provenance: pass
+`--actuator-success-rate 0.8` explicitly when evaluating a checkpoint under
+the noisy actuator, including a checkpoint trained with that setting.
 
 `generalization.json` additionally evaluates half/double nominal block lengths
 (7 and 30 by default) with randomized initial contingency. These are deliberate
@@ -106,14 +139,25 @@ Useful outputs:
 - `config.json`: exact arguments, observation/actuator contract, source revision,
   dirty status and library versions.
 - `learning.csv` / `learning.jsonl`: completed choices, updates, loss, gradient
-  norm, training accuracy/reward and wall time.
+  norm, commanded/executed accuracy, observed actuator success, reward and wall time.
 - `validation.json`: sampled and greedy learning curves at saved checkpoints.
 - `evaluation.json`: final metrics, per-session summaries, curves indexed by
   trials since an **actual reversal**, and a separate nominal-block curve.
 - `*_trials.csv`: frozen-test choices, rewards, scores/probabilities and hidden
   evaluator metadata, enough to recompute adaptation and omission responses.
 - `generalization.json`, `summary.json`, `manager.pt`, and intermediate manager
-  checkpoints. Checkpoints contain weights and compatibility metadata only.
+  checkpoints. Checkpoints contain weights, compatibility metadata, and task
+  provenance (including training actuator success), without optimizer state.
+
+`high_arm_accuracy` and `chosen_arm` always refer to **execution**;
+`commanded_high_arm_accuracy` and `commanded_arm` refer to the manager's command.
+Switch curves include both accuracies. Omission responses likewise distinguish
+changes in command from changes in executed arm. `expected_regret_per_trial`
+compares expected command reward to the optimal command under the **same**
+actuator (0.68 at 80% success), so unavoidable execution failures are not assigned
+to the manager. `perfect_actuator_regret_per_trial` retains the comparison to
+the ideal physical-arm reward (0.8), including actuator cost. These coincide in
+the default perfect-actuator condition.
 
 Stable accuracy means the second half of each nominal block. Switch curves omit
 the initial block and censor a curve at the next actual switch. Missing switch

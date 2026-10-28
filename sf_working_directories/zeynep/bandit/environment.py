@@ -1,8 +1,9 @@
 """Trial-level version of the Y-maze reward process, without navigation.
 
 Arm indices are 0=left and 1=right; mode indices remain arbitrary actions. A
-fixed mode-to-arm permutation represents a perfect actuator, not a claim that
-the full controller has learned that mapping. Hidden task state is returned
+fixed mode-to-arm permutation defines the intended arm; an optional actuator
+error executes the opposite arm. This is not a claim that the full controller
+has learned that mapping. Hidden task state and executed arms are returned
 only as diagnostic metadata and must never be passed to the learned policy.
 """
 
@@ -29,9 +30,10 @@ class BanditConfig:
     switch_probability: float = 0.66
     initial_high_arm: str = "right"
     mode_to_arm: Tuple[int, int] = (0, 1)
+    actuator_success_rate: float = 1.0
 
     def __post_init__(self):
-        for name in ("p_high", "p_low", "switch_probability"):
+        for name in ("p_high", "p_low", "switch_probability", "actuator_success_rate"):
             value = getattr(self, name)
             if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
                 raise ValueError(f"{name} must be a finite probability in [0, 1]")
@@ -70,8 +72,10 @@ class BlockSwitchBandit:
     matching the Lua task's complementary potential outcomes. For a custom
     non-complementary pair, only the chosen arm's Bernoulli outcome is sampled.
 
-    This removes travel time, failed initiation, timeouts, and motor errors.
-    A step always represents exactly one completed trial. Sessions never reset
+    This removes travel time, failed initiation, and timeouts. Motor errors
+    independently flip the commanded arm with probability
+    ``1 - actuator_success_rate``. A step always represents exactly one
+    completed trial. Sessions never reset
     implicitly; the caller must reset recurrent state together with ``reset``.
     """
 
@@ -82,7 +86,7 @@ class BlockSwitchBandit:
             raise ValueError("num_envs must be a positive integer")
         self.config = config
         self.num_envs = int(num_envs)
-        self._rng = np.random.default_rng(seed)
+        self._seed_rngs(seed)
         self._mode_to_arm = np.asarray(config.mode_to_arm, dtype=np.int64)
         self.reset()
 
@@ -99,10 +103,17 @@ class BlockSwitchBandit:
         """Hidden contingency for evaluation controls only, returned as a copy."""
         return self._high_arm.copy()
 
+    def _seed_rngs(self, seed: Optional[int]) -> None:
+        # Keep the original default_rng(seed) reward/switch stream unchanged.
+        # A child stream isolates actuator errors from hidden task randomness.
+        seed_sequence = np.random.SeedSequence(seed)
+        self._rng = np.random.default_rng(seed_sequence)
+        self._actuator_rng = np.random.default_rng(seed_sequence.spawn(1)[0])
+
     def reset(self, seed: Optional[int] = None) -> None:
-        """Begin fresh sessions; continue the RNG stream unless reseeded."""
+        """Begin fresh sessions; continue both RNG streams unless reseeded."""
         if seed is not None:
-            self._rng = np.random.default_rng(seed)
+            self._seed_rngs(seed)
         self.trial_index = 0
         if self.config.initial_high_arm == "random":
             self._high_arm = self._rng.integers(0, 2, size=self.num_envs, dtype=np.int64)
@@ -119,6 +130,9 @@ class BlockSwitchBandit:
         ``actual_switch`` and ``nominal_boundary`` are false on session trial
         zero and mark the first trial after a subsequent boundary. ``done``
         marks the final completed trial; its reward is still a valid target.
+        ``commanded_arm`` is the mode's intended arm; ``chosen_arm`` is the
+        executed arm. ``command_reward_probability`` marginalizes actuator
+        error, while ``reward_probability`` conditions on the executed arm.
         """
         if self.done:
             raise RuntimeError("Session is complete; call reset() before step()")
@@ -128,7 +142,15 @@ class BlockSwitchBandit:
         if not np.issubdtype(modes.dtype, np.integer) or np.any((modes < 0) | (modes > 1)):
             raise ValueError("mode_indices must contain integer mode indices 0 or 1")
 
-        chosen_arm = self._mode_to_arm[modes]
+        commanded_arm = self._mode_to_arm[modes]
+        actuator_success = self._actuator_rng.random(self.num_envs) < self.config.actuator_success_rate
+        chosen_arm = np.where(actuator_success, commanded_arm, 1 - commanded_arm)
+        intended_probability = np.where(commanded_arm == self._high_arm, self.config.p_high, self.config.p_low)
+        opposite_probability = np.where(commanded_arm == self._high_arm, self.config.p_low, self.config.p_high)
+        command_reward_probability = (
+            self.config.actuator_success_rate * intended_probability
+            + (1.0 - self.config.actuator_success_rate) * opposite_probability
+        )
         reward_probability = np.where(chosen_arm == self._high_arm, self.config.p_high, self.config.p_low)
         lottery = self._rng.random(self.num_envs)
         if np.isclose(self.config.p_high + self.config.p_low, 1.0, rtol=0.0, atol=1e-12):
@@ -140,12 +162,15 @@ class BlockSwitchBandit:
         metadata = {
             "trial": np.full(self.num_envs, self.trial_index, dtype=np.int64),
             "high_arm": self._high_arm.copy(),
+            "commanded_arm": commanded_arm.copy(),
             "chosen_arm": chosen_arm.copy(),
+            "actuator_success": actuator_success,
             "block_index": np.full(self.num_envs, self.trial_index // self.config.block_length, dtype=np.int64),
             "trial_in_block": np.full(self.num_envs, self.trial_index % self.config.block_length, dtype=np.int64),
             "actual_switch": self._actual_switch.copy(),
             "nominal_boundary": np.full(self.num_envs, self._nominal_boundary, dtype=bool),
             "reward_probability": reward_probability,
+            "command_reward_probability": command_reward_probability,
             "done": np.full(self.num_envs, self.trial_index + 1 == self.session_trials, dtype=bool),
         }
         self.trial_index += 1

@@ -99,6 +99,144 @@ def test_random_initialization_reset_seed_and_metadata_are_independent():
     np.testing.assert_array_equal(repeated_reward, reward)
 
 
+@pytest.mark.parametrize("success_rate", [0.0, 1.0])
+@pytest.mark.parametrize("mapping", [(0, 1), (1, 0)])
+def test_actuator_endpoints_execute_mapped_or_opposite_arm(success_rate, mapping):
+    cfg = BanditConfig(
+        p_high=1.0,
+        p_low=0.0,
+        actuator_success_rate=success_rate,
+        mode_to_arm=mapping,
+        block_length=1,
+        blocks_per_session=2,
+        switch_probability=1.0,
+    )
+    env = BlockSwitchBandit(cfg, num_envs=2, seed=19)
+    commanded = np.asarray(mapping)
+    executed = commanded if success_rate == 1.0 else 1 - commanded
+    for high_arm in (1, 0):
+        reward, info = env.step([0, 1])
+        np.testing.assert_array_equal(info["commanded_arm"], commanded)
+        np.testing.assert_array_equal(info["chosen_arm"], executed)
+        np.testing.assert_array_equal(info["actuator_success"], bool(success_rate))
+        assert info["actuator_success"].dtype == bool
+        np.testing.assert_array_equal(reward, executed == high_arm)
+        np.testing.assert_array_equal(info["reward_probability"], reward)
+        np.testing.assert_array_equal(info["command_reward_probability"], reward)
+
+
+@pytest.mark.parametrize("p_high,p_low", [(0.8, 0.2), (0.9, 0.4)])
+def test_eighty_percent_actuator_has_correct_execution_and_reward_marginals(p_high, p_low):
+    cfg = BanditConfig(p_high=p_high, p_low=p_low, actuator_success_rate=0.8)
+    env = BlockSwitchBandit(cfg, num_envs=100000, seed=71)
+    modes = np.tile([0, 1], 50000)
+    reward, info = env.step(modes)
+    expected_high = 0.8 * p_high + 0.2 * p_low  # 0.68 for the default task.
+    expected_low = 0.8 * p_low + 0.2 * p_high  # 0.32 for the default task.
+    for mode, expected in ((0, expected_low), (1, expected_high)):
+        selected = modes == mode
+        assert abs(info["actuator_success"][selected].mean() - 0.8) < 0.01
+        assert abs(reward[selected].mean() - expected) < 0.01
+        np.testing.assert_allclose(info["command_reward_probability"][selected], expected)
+    np.testing.assert_array_equal(info["commanded_arm"], modes)
+    np.testing.assert_array_equal(info["actuator_success"], info["chosen_arm"] == modes)
+    np.testing.assert_allclose(info["reward_probability"], np.where(info["chosen_arm"] == 1, p_high, p_low))
+
+
+def test_noisy_actuator_is_repeatable_and_reset_seed_restarts_both_streams():
+    cfg = BanditConfig(actuator_success_rate=0.8, initial_high_arm="random", block_length=2, blocks_per_session=3)
+    env = BlockSwitchBandit(cfg, num_envs=32, seed=41)
+    replay = BlockSwitchBandit(cfg, num_envs=32, seed=41)
+    modes = np.tile([0, 1], 16)
+    sessions = []
+    for _ in range(2):
+        trajectory = []
+        for _ in range(cfg.session_trials):
+            reward, info = env.step(modes)
+            replay_reward, replay_info = replay.step(modes)
+            np.testing.assert_array_equal(reward, replay_reward)
+            for key in info:
+                np.testing.assert_array_equal(info[key], replay_info[key])
+            trajectory.append((reward, info))
+        sessions.append(trajectory)
+        env.reset()
+        replay.reset()
+    assert not np.array_equal(sessions[0][0][1]["actuator_success"], sessions[1][0][1]["actuator_success"])
+    env.reset(seed=41)
+    for expected_reward, expected_info in sessions[0]:
+        reward, info = env.step(modes)
+        np.testing.assert_array_equal(reward, expected_reward)
+        for key in info:
+            np.testing.assert_array_equal(info[key], expected_info[key])
+
+
+def test_actuator_reliability_does_not_change_task_lotteries_or_switches():
+    environments = [
+        BlockSwitchBandit(
+            BanditConfig(actuator_success_rate=rate, initial_high_arm="random", block_length=2),
+            num_envs=64,
+            seed=43,
+        )
+        for rate in (0.0, 0.8, 1.0)
+    ]
+    modes = np.tile([0, 1], 32)
+    for _ in range(2):
+        for _ in range(environments[0].session_trials):
+            trials = [env.step(modes) for env in environments]
+            reference_reward, reference_info = trials[0]
+            reference_winner = np.where(
+                reference_reward, reference_info["chosen_arm"], 1 - reference_info["chosen_arm"]
+            )
+            for reward, info in trials[1:]:
+                np.testing.assert_array_equal(info["high_arm"], reference_info["high_arm"])
+                np.testing.assert_array_equal(info["actual_switch"], reference_info["actual_switch"])
+                winner = np.where(reward, info["chosen_arm"], 1 - info["chosen_arm"])
+                np.testing.assert_array_equal(winner, reference_winner)
+        for env in environments:
+            env.reset()
+
+
+def test_default_actuator_preserves_pre_noise_seeded_trajectory():
+    # Captured from the original perfect-actuator implementation, including
+    # an unseeded reset, so old experiment seeds remain comparable.
+    expected_rewards = [
+        [0, 0, 0, 1],
+        [0, 0, 1, 1],
+        [0, 0, 1, 1],
+        [1, 0, 1, 1],
+        [1, 1, 1, 0],
+        [1, 0, 1, 1],
+        [1, 0, 1, 1],
+        [0, 0, 1, 1],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+    ]
+    expected_high_arms = [
+        [1, 0, 0, 1],
+        [1, 0, 0, 1],
+        [0, 0, 0, 1],
+        [0, 0, 0, 1],
+        [0, 1, 0, 0],
+        [0, 1, 0, 0],
+        [1, 0, 0, 1],
+        [1, 0, 0, 1],
+        [1, 0, 1, 0],
+        [1, 0, 1, 0],
+        [1, 0, 1, 0],
+        [1, 0, 1, 0],
+    ]
+    cfg = BanditConfig(initial_high_arm="random", block_length=2, blocks_per_session=3)
+    env = BlockSwitchBandit(cfg, num_envs=4, seed=18)
+    for trial, (expected_reward, expected_high) in enumerate(zip(expected_rewards, expected_high_arms)):
+        if trial == cfg.session_trials:
+            env.reset()
+        reward, info = env.step([0, 1, 0, 1])
+        np.testing.assert_array_equal(reward, expected_reward)
+        np.testing.assert_array_equal(info["high_arm"], expected_high)
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -107,6 +245,13 @@ def test_random_initialization_reset_seed_and_metadata_are_independent():
         {"p_high": 0.1, "p_low": 0.2},
         {"switch_probability": 1.01},
         {"switch_probability": True},
+        {"actuator_success_rate": -0.1},
+        {"actuator_success_rate": 1.01},
+        {"actuator_success_rate": float("nan")},
+        {"actuator_success_rate": float("inf")},
+        {"actuator_success_rate": True},
+        {"actuator_success_rate": np.bool_(False)},
+        {"actuator_success_rate": "0.8"},
         {"block_length": 0},
         {"block_length": 2.5},
         {"blocks_per_session": False},

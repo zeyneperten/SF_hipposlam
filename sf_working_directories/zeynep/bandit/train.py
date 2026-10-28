@@ -96,7 +96,10 @@ def evaluate(model, task, num_sessions, seed, policy="sampled", reset_memory=Fal
     h = initial_hidden(model, num_sessions)
     rng = np.random.default_rng(seed + 1)
     arm_to_mode = np.argsort(task.mode_to_arm)
+    reliability = max(task.actuator_success_rate, 1 - task.actuator_success_rate)
+    attainable_reward = reliability * task.p_high + (1 - reliability) * task.p_low
     previous_arm = rng.integers(0, 2, num_sessions)
+    previous_command = previous_arm.copy()
     previous_reward = np.ones(num_sessions)
     previous_high = np.full(num_sessions, -1)
     switch_age = np.full(num_sessions, -1)
@@ -120,9 +123,10 @@ def evaluate(model, task, num_sessions, seed, policy="sampled", reset_memory=Fal
                 elif policy == "random":
                     choices = rng.integers(0, 2, num_sessions)
                 elif policy == "win_stay_lose_shift":
-                    choices = arm_to_mode[np.where(previous_reward > 0, previous_arm, 1 - previous_arm)]
+                    choices = arm_to_mode[np.where(previous_reward > 0, previous_command, 1 - previous_command)]
                 elif policy == "oracle":
-                    choices = arm_to_mode[env.high_arm]
+                    oracle_arm = env.high_arm if task.actuator_success_rate >= 0.5 else 1 - env.high_arm
+                    choices = arm_to_mode[oracle_arm]
                 else:
                     raise ValueError(f"Unknown evaluation policy: {policy}")
                 reward, info = env.step(choices)
@@ -133,6 +137,7 @@ def evaluate(model, task, num_sessions, seed, policy="sampled", reset_memory=Fal
                 for index in range(num_sessions):
                     high = int(info["high_arm"][index])
                     chosen = int(info["chosen_arm"][index])
+                    commanded = int(info["commanded_arm"][index])
                     rows.append(
                         {
                             "session": index,
@@ -144,10 +149,14 @@ def evaluate(model, task, num_sessions, seed, policy="sampled", reset_memory=Fal
                             "since_actual_switch": int(switch_age[index]),
                             "mode": int(choices[index]),
                             "chosen_arm": chosen,
+                            "commanded_arm": commanded,
+                            "actuator_success": bool(info["actuator_success"][index]),
                             "high_arm": high,
                             "reward": float(reward[index]),
                             "high_arm_choice": int(chosen == high),
-                            "expected_regret": float(task.p_high - info["reward_probability"][index]),
+                            "commanded_high_arm_choice": int(commanded == high),
+                            "expected_regret": float(attainable_reward - info["command_reward_probability"][index]),
+                            "perfect_actuator_regret": float(task.p_high - info["reward_probability"][index]),
                             "mode0_probability": float(probs[index, 0]) if policy in ("sampled", "greedy") else None,
                             "score0": float(values[index, 0]) if policy in ("sampled", "greedy") else None,
                             "score1": float(values[index, 1]) if policy in ("sampled", "greedy") else None,
@@ -156,11 +165,13 @@ def evaluate(model, task, num_sessions, seed, policy="sampled", reset_memory=Fal
                                 trial > 0 and previous_reward[index] == 0 and previous_high[index] == high
                             ),
                             "changed_arm": bool(trial > 0 and chosen != previous_arm[index]),
+                            "changed_command": bool(trial > 0 and commanded != previous_command[index]),
                         }
                     )
                 z = torch.nn.functional.one_hot(torch.as_tensor(choices, device=device), num_classes=model.K).float()
                 h = model.update_state(event, torch.as_tensor(reward, device=device), h, z)
                 previous_arm = info["chosen_arm"]
+                previous_command = info["commanded_arm"]
                 previous_reward = reward
                 previous_high = info["high_arm"]
     finally:
@@ -182,6 +193,7 @@ def summarize(rows, task, num_sessions):
                     "lag": lag,
                     "n": len(subset),
                     "high_arm_accuracy": mean("high_arm_choice", subset),
+                    "commanded_high_arm_accuracy": mean("commanded_high_arm_choice", subset),
                     "reward_rate": mean("reward", subset),
                 }
             )
@@ -198,6 +210,7 @@ def summarize(rows, task, num_sessions):
             {
                 "session": session,
                 "high_arm_accuracy": mean("high_arm_choice", subset),
+                "commanded_high_arm_accuracy": mean("commanded_high_arm_choice", subset),
                 "reward_rate": mean("reward", subset),
             }
         )
@@ -206,12 +219,17 @@ def summarize(rows, task, num_sessions):
         "completed_trials": len(rows),
         "actual_switches": sum(r["actual_switch"] for r in rows),
         "high_arm_accuracy": mean("high_arm_choice"),
+        "commanded_high_arm_accuracy": mean("commanded_high_arm_choice"),
+        "actuator_success_rate": mean("actuator_success"),
         "reward_rate": mean("reward"),
         "expected_regret_per_trial": mean("expected_regret"),
+        "perfect_actuator_regret_per_trial": mean("perfect_actuator_regret"),
         "stable_half_block_accuracy": mean("high_arm_choice", stable),
+        "stable_half_block_commanded_accuracy": mean("commanded_high_arm_choice", stable),
         "mode0_fraction": float(np.mean([r["mode"] == 0 for r in rows])),
         "mode_entropy": mean("mode_entropy"),
         "arm_change_after_omission_same_context": mean("changed_arm", omissions),
+        "command_change_after_omission_same_context": mean("changed_command", omissions),
         "actual_switch_curve": curve("since_actual_switch", task.block_length),
         "nominal_block_curve": curve("trial_in_block", task.block_length),
         "sessions": sessions,
@@ -240,7 +258,9 @@ def evaluation_suite(model, task, num_sessions, seed, output=None):
 
 def compact_evaluation(result):
     return {
-        name: {k: value[k] for k in ("high_arm_accuracy", "reward_rate", "actual_switches")}
+        name: {
+            k: value[k] for k in ("high_arm_accuracy", "commanded_high_arm_accuracy", "reward_rate", "actual_switches")
+        }
         for name, value in result.items()
     }
 
@@ -263,6 +283,7 @@ def train(args, model, task, output):
             h = initial_hidden(model, args.num_envs)
             records = torch.zeros(args.num_envs, history.history_size, device=device)
             samples, accuracy, rewards = [], [], []
+            command_accuracy, actuator_success = [], []
             losses, grad_norms = [], []
             for trial in range(env.session_trials):
                 with torch.no_grad():
@@ -271,6 +292,8 @@ def train(args, model, task, output):
                     reward = torch.as_tensor(reward_np, device=device)
                     samples.append((records.clone(), h.clone(), indices.clone(), reward.clone()))
                     accuracy.extend((info["chosen_arm"] == info["high_arm"]).tolist())
+                    command_accuracy.extend((info["commanded_arm"] == info["high_arm"]).tolist())
+                    actuator_success.extend(info["actuator_success"].tolist())
                     rewards.extend(reward_np.tolist())
                     records = history.append_event(records, h, mode, reward, event)
                     h = model.update_state(event, reward, h, mode)
@@ -295,6 +318,8 @@ def train(args, model, task, output):
                 "completed_trials": completed,
                 "optimizer_updates": updates,
                 "high_arm_accuracy": float(np.mean(accuracy)),
+                "commanded_high_arm_accuracy": float(np.mean(command_accuracy)),
+                "actuator_success_rate": float(np.mean(actuator_success)),
                 "reward_rate": float(np.mean(rewards)),
                 "loss": float(np.mean(losses)),
                 "gradient_norm": float(np.mean(grad_norms)),
@@ -321,7 +346,7 @@ def train(args, model, task, output):
                     model,
                     args.history_len,
                     task.mode_to_arm,
-                    extra={"completed_trials": completed, "optimizer_updates": updates},
+                    extra={"completed_trials": completed, "optimizer_updates": updates, "task": asdict(task)},
                 )
     write_csv(output / "learning.csv", log_rows)
     write_json(output / "validation.json", eval_rows)
@@ -330,7 +355,7 @@ def train(args, model, task, output):
         model,
         args.history_len,
         task.mode_to_arm,
-        extra={"completed_trials": completed, "optimizer_updates": updates},
+        extra={"completed_trials": completed, "optimizer_updates": updates, "task": asdict(task)},
     )
     return {"completed_trials": completed, "optimizer_updates": updates, "elapsed_seconds": time.monotonic() - started}
 
@@ -367,6 +392,12 @@ def parser():
     p.add_argument("--switch-probability", type=float, default=0.66)
     p.add_argument("--p-high", type=float, default=0.8)
     p.add_argument("--p-low", type=float, default=0.2)
+    p.add_argument(
+        "--actuator-success-rate",
+        type=float,
+        default=1.0,
+        help="Probability of executing the commanded arm; otherwise execute the opposite arm.",
+    )
     p.add_argument("--initial-high-arm", choices=("left", "right", "random"), default="right")
     p.add_argument("--mode-to-arm", type=int, nargs=2, default=(0, 1), metavar=("MODE0_ARM", "MODE1_ARM"))
     p.add_argument("--eval-every", type=int, default=50)
@@ -408,6 +439,7 @@ def main(argv=None):
         switch_probability=args.switch_probability,
         initial_high_arm=args.initial_high_arm,
         mode_to_arm=tuple(args.mode_to_arm),
+        actuator_success_rate=args.actuator_success_rate,
     )
     torch.set_num_threads(args.threads)
     torch.manual_seed(args.seed)
@@ -450,7 +482,7 @@ def main(argv=None):
                 "representations": model.representations,
             },
             "observation": "previous mode one-hot and binary outcome only; first trigger uses zero mode/reward",
-            "actuator": "fixed bijection: each mode executes its configured arm with probability one",
+            "actuator": "mode commands configured arm; independently execute opposite arm on actuator failure",
             "optimization": "shared trial-history reconstruction and Q/policy loss; synchronous Adam; no PPO or PBT",
         },
     )

@@ -9,8 +9,12 @@ Only PyTorch and NumPy are needed for this standalone task. From the repository 
 
 ```bash
 python -m sf_working_directories.zeynep.bandit.train \
-  --output train_dir/hl_bandit/seed7 --seed 7
+  --output train_dir/hl_bandit/actuator80_seed7 --seed 7 \
+  --actuator-success-rate 0.8
 ```
+
+This executes the commanded arm on 80% of trials and the opposite arm on 20%.
+Omit `--actuator-success-rate` for the perfect-actuator reference.
 
 See the [standalone task runbook](sf_working_directories/zeynep/bandit/README.md)
 for block-switch rules, controls, evaluation metrics and checkpoint transfer.
