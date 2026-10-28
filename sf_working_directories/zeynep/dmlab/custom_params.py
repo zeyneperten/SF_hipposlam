@@ -130,6 +130,12 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         help="Whether to learn the decay factor for the context RNN's value state via backpropagation.",
     )
     ##      High Level RNN parameters      ##
+    p.add_argument(
+        "--hl_init_checkpoint",
+        default=None,
+        type=str,
+        help="Weights-only manager initialization from a standalone bandit or full checkpoint; target resume takes precedence.",
+    )
     p.add_argument("--hl_K", default=4, type=int, help="Number of modes for the high-level RNN.")
     p.add_argument("--hl_d_H", default=16, type=int, help="Dimension of the high-level RNN's hidden state.")
     p.add_argument(

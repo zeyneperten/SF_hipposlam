@@ -57,7 +57,7 @@ def register_dmlab_components(level_caches: Optional[DmlabLevelCaches] = None, c
     if cfg.core_name == "BypassSS_HighLevelRNN":
         global_model_factory().register_actor_critic_factory(make_hipposlam_actor_critic)
 
-    if getattr(cfg, "hl_dg_from_prev_z", False):
+    if getattr(cfg, "hl_dg_from_prev_z", False) or getattr(cfg, "hl_init_checkpoint", None):
         global_learner_factory().register_learner_factory(make_oracle_transfer_learner)
 
     # global_learner_factory().register_learner_factory(make_hipposlam_learner)

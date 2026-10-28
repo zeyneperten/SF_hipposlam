@@ -16,6 +16,7 @@ from sf_working_directories.zeynep.dmlab.custom_highlevelRNN import (
     HighLevelContextRNN_Policy,
     HighLevelContextRNN_QLearning,
     HighLevelContextRNN_Stage1,
+    TrialHistory,
     compute_log_dict,
     high_level_policy_loss,
     q_loss,
@@ -630,14 +631,9 @@ class HighLevelRNNWrapperCore(ModelCore):
 
         self.d_rep = getattr(cfg, "hl_d_rep", 64)
 
-        if self.representations:
-            self.event_width = (
-                self.d_H + self.K + 2 + (2 * self.d_rep)
-            )  # pre-event h, chosen z, reward, valid flag = 16 + 2 + 2 + 128 = 148
-        else:
-            self.event_width = self.d_H + self.K + 2  # pre-event h, chosen z, reward, valid flag
-
-        self.history_size = self.history_len * self.event_width
+        self.trial_history = TrialHistory(self.K, self.d_H, self.history_len, self.representations, self.d_rep)
+        self.event_width = self.trial_history.event_width
+        self.history_size = self.trial_history.history_size
         self.oracle = getattr(cfg, "oracle_context", False)
 
         # NEW: Check if we are doing Policy Gradient or Q-Learning
@@ -694,69 +690,12 @@ class HighLevelRNNWrapperCore(ModelCore):
     def append_event(
         self, history, h_before, z_before, reward, event_mask, e_trigger: Tensor = None, e_outcome: Tensor = None
     ):
-        """Keep completed trials for learner unrolling; this is not a policy input."""
-        valid_flag = torch.ones_like(reward[:, None])
-
-        if self.representations:
-            if e_trigger is None or e_outcome is None:
-                raise ValueError("e_trigger and e_outcome must be provided when representations are enabled")
-            entry = torch.cat(
-                (
-                    h_before.detach(),
-                    z_before.detach(),
-                    reward[:, None],
-                    e_trigger.detach(),
-                    e_outcome.detach(),
-                    valid_flag,
-                ),
-                dim=-1,
-            )
-        else:
-            entry = torch.cat((h_before.detach(), z_before.detach(), reward[:, None], valid_flag), dim=-1)
-
-        shifted = torch.cat(
-            (history[:, self.event_width :], entry), dim=-1
-        )  # Shift history to the left and append new entry
-        valid_outcome = event_mask & (z_before.sum(dim=-1) > 0.5)
-
-        return torch.where(
-            valid_outcome[:, None], shifted, history
-        )  # Return the updated history, only if the outcome is valid
+        """Keep completed trials in the shared replay layout."""
+        return self.trial_history.append_event(history, h_before, z_before, reward, event_mask, e_trigger, e_outcome)
 
     def scores_from_history(self, history, fallback_h):
-        """Rebuild the decision state through past trial events under current weights.
-        When a trial ends, it rewinds to the oldest saved trial in the backpack and fast-forward through history to calculate exact Q-values.
-        """
-        events = history.reshape(
-            -1, self.history_len, self.event_width
-        )  # reshape to 3D tensor: (batch, history_len, event_width)
-        valid = events[:, :, -1] > 0.5  # get the events that are actual trials (valid flag)
-        first = valid.int().argmax(dim=1)  # first ever trial
-        batch = torch.arange(events.size(0), device=events.device)
-        h = torch.where(
-            valid.any(dim=1, keepdim=True), events[batch, first, : self.d_H], fallback_h
-        )  # use the first valid trial's h as the starting point, or fallback_h if no valid trials
-
-        for k in range(self.history_len):
-            event = events[:, k]
-            z = event[:, self.d_H : self.d_H + self.K]
-            reward = event[:, self.d_H + self.K]
-            if self.representations:
-                # Unpack two 64-dim landmark representations, slice from the event tensor
-                trig_start = self.d_H + self.K + 1
-                trig_end = trig_start + self.d_rep
-                out_end = trig_end + self.d_rep
-                e_trigger = event[:, trig_start:trig_end]  # the next 64 numbers are the trigger representation
-                e_outcome = event[:, trig_end:out_end]  # the next 64 numbers are the outcome representation
-
-                h = self.hl_learner.update_state(
-                    valid[:, k], reward, h, z, e_trigger, e_outcome
-                )  # step HLRNN forward one trial at a time, using the saved z and reward from history
-            else:
-                h = self.hl_learner.update_state(
-                    valid[:, k], reward, h, z
-                )  # step HLRNN forward one trial at a time, using the saved z and reward from history
-        return self.hl_learner.head(h)  # Calculate current Q-values for the current frame.
+        """Rebuild the decision state through past trial events under current weights."""
+        return self.trial_history.scores_from_history(self.hl_learner, history, fallback_h)
 
     def forward(self, head_output, rnn_states):
         is_packed = isinstance(head_output, PackedSequence)
