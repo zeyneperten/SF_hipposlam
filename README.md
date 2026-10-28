@@ -1,3 +1,20 @@
+# Standalone HL RNN bandit task
+
+The standalone high-level RNN bandit task isolates learning and block-switch
+adaptation in a two-arm bandit, without vision, navigation, DG/CA3 or low-level
+PPO. It reuses the full setup's high-level RNN, trial-history replay and Q/policy
+losses, with compatible manager checkpoint loading.
+
+Only PyTorch and NumPy are needed for this standalone task. From the repository root:
+
+```bash
+python -m sf_working_directories.zeynep.bandit.train \
+  --output train_dir/hl_bandit/seed7 --seed 7
+```
+
+See the [standalone task runbook](sf_working_directories/zeynep/bandit/README.md)
+for block-switch rules, controls, evaluation metrics and checkpoint transfer.
+
 # quick start
 
 
