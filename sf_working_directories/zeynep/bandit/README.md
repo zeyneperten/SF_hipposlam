@@ -69,6 +69,9 @@ execution is unobserved, the RNN sees a bandit with effective command rewards
 68/32. A slower switch response can therefore reflect weaker outcome evidence.
 It does not by itself establish a distinct motor-specific learning deficit.
 
+The [matched three-seed pilot](ACTUATOR_80_PILOT.md) records the 80% actuator
+results and frozen cross-condition comparisons.
+
 ## Controls and evaluation
 
 Use a separate output directory for each run. Change one factor at a time:
