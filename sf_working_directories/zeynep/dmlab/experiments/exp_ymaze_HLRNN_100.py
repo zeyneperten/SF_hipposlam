@@ -135,7 +135,7 @@ cli = (
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1324 "  # (2476 with reps) 1166 base (1146 + 4 + 16) + 8 trial records * (16 pre-event h + 4 mode + reward + valid) = 1342
+    "--rnn_size=2476 "  # (2476 with reps) 1166 base (1146 + 4 + 16) + 8 trial records * (16 pre-event h + 4 mode + reward + valid) = 1342
     "--exploration_loss_coeff=0.008 "
     # "--value_loss_coeff=0.3 "
     # "--ppo_clip_ratio=0.25 "
@@ -153,8 +153,8 @@ cli = (
     "--hl_history_len=8 "
     "--hl_dg_from_prev_z=True "
     "--hl_DG_mod=sigmoid "
-    #"--hl_representations=True "
-    #"--hl_d_rep=64 " # size of decoder representation vector per landmark. We have 2 landmarks, so total is 128. base + h + reps + mb + z = 1146 + 16 + 128 + (8*(16 + 2 + 1 + 64 + 64 + 1)=1184) + 2 = 2476
+    "--hl_representations=True "
+    "--hl_d_rep=64 " # size of decoder representation vector per landmark. We have 2 landmarks, so total is 128. base + h + reps + mb + z = 1146 + 16 + 128 + (8*(16 + 2 + 1 + 64 + 64 + 1)=1184) + 2 = 2476
     "--hl_is_policy=False "  # one-step Q regression on the mode that actually earned each trial reward
     "--hl_diversity_reward_coef=0.01 " # at most 0.01 per completed trial, for controller PPO only
     "--hl_diversity_include_chosen_arm=True " # include the chosen arm in the classifier input for levels that return to an identical center view at outcome

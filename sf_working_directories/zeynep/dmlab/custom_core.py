@@ -670,6 +670,7 @@ class HighLevelRNNWrapperCore(ModelCore):
             deterministic=getattr(cfg, "hl_deterministic", False),
             representations=self.representations,
             d_rep=self.d_rep,
+            mixed_selection=getattr(cfg, "hl_mixed_selection", False)
         )
 
         # self.total_state_size = self.base_state_size + self.d_H + self.history_size + self.K
@@ -689,7 +690,7 @@ class HighLevelRNNWrapperCore(ModelCore):
         return self.total_output_size
 
     def set_decoder(self, decoder):
-        self.decoder = decoder
+        object.__setattr__(self, "decoder", decoder) # hold plain reference to the decoder without registering it as a submodule, to avoid double-counting parameters in the decoder
 
     def append_event(
         self, history, h_before, z_before, reward, event_mask, e_trigger: Tensor = None, e_outcome: Tensor = None

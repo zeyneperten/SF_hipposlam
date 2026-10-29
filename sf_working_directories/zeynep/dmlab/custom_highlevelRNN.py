@@ -406,7 +406,9 @@ def high_level_policy_loss(
 
     # 1. The Baseline (b_k)
     # Average rewards the HL RNN got in this batch.
-    b_k = (rewards * mask_float).sum() / valid_transitions
+    #b_k = (rewards * mask_float).sum() / valid_transitions
+    # instead have a fixed b_k = 0.5, so a win gives +0.5 and a loss gives -0.5
+    b_k = 0.5
 
     # 2. The Advantage (R_k - b_k)
     # Difference between the actual reward and the baseline. This tells us how much better or worse the selected action was compared to the average.
@@ -421,7 +423,7 @@ def high_level_policy_loss(
 
     # --- NEW: Create a dictionary of these specific Policy Gradient metrics ---
     metrics = {
-        "hl/pg_baseline": b_k.item(),
+        "hl/pg_baseline": float(b_k),
         "hl/pg_advantage": (advantages * mask_float).sum().item() / valid_transitions.item(),
         "hl/pg_loss": (pg_loss * mask_float).sum().item() / valid_transitions.item(),
     }
@@ -447,6 +449,7 @@ class HighLevelContextRNN_Learner(nn.Module):
         deterministic: bool = False,
         representations: bool = False,
         d_rep: int = 64,
+        mixed_selection: bool = False,  
     ):
         super().__init__()
         self.K = K
@@ -456,11 +459,13 @@ class HighLevelContextRNN_Learner(nn.Module):
         self.deterministic = deterministic
         self.representations = representations  # If True, the model will get representations from decoder 1st layer
         self.d_rep = d_rep  # Dimension of the representation vector
+        self.mixed_selection = mixed_selection  # If True, the model will use a mix of deterministic and stochastic selection
 
+        mode_dim = (2 * K) if self.mixed_selection else (K + 1) # 2 * K won and lost modes, otherwise z and r additively
         if self.representations:
-            input_dim = K + 1 + (2 * self.d_rep)  # z_prev + prev_reward + 2 * representation size = 2 + 1 + 128 = 131
+            input_dim = mode_dim+ (2 * self.d_rep)  # z_prev + prev_reward + 2 * representation size = 2 + 1 + 128 = 131
         else:
-            input_dim = K + 1  # z_prev + prev_reward
+            input_dim = mode_dim  # z_prev + prev_reward
 
         self.rnn_cell = nn.RNNCell(input_size=input_dim, hidden_size=d_H, nonlinearity="tanh")
 
@@ -518,13 +523,22 @@ class HighLevelContextRNN_Learner(nn.Module):
 
     def update_state(self, outcome_mask, prev_trial_reward, h_high, z_prev, e_trigger=None, e_outcome=None):
         """Update reward history without choosing a new mode (used during replay)."""
+        r_col = prev_trial_reward[:, None] if prev_trial_reward.dim() == 1 else prev_trial_reward # turn the 1D reward into a column vector if needed
+        
+        if self.mixed_selection:
+            z_won = z_prev * r_col  # element-wise multiplication to get the "won" mode
+            z_lost = z_prev * (1 - r_col)  # element-wise multiplication to get the "lost" mode
+            mode_inputs = [z_won, z_lost]
+        else:
+            mode_inputs = [z_prev, r_col]
+
         if self.representations:
             if e_trigger is None or e_outcome is None:
                 raise ValueError("representations=True requires both e_trigger and e_outcome")
 
-            rnn_in = torch.cat([z_prev, prev_trial_reward[:, None], e_trigger, e_outcome], dim=-1)
+            rnn_in = torch.cat(mode_inputs + [e_trigger, e_outcome], dim=-1)
         else:
-            rnn_in = torch.cat([z_prev, prev_trial_reward[:, None]], dim=-1)
+            rnn_in = torch.cat(mode_inputs, dim=-1)
 
         h_candidate = self.rnn_cell(rnn_in, h_high)
         h_high_new = torch.where(outcome_mask[:, None], h_candidate, h_high)

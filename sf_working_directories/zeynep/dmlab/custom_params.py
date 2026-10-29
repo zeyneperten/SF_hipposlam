@@ -197,6 +197,12 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         help="How the high-level mode vector modulates DG projection. ",
     )
     ###################
+    p.add_argument(
+        "--hl_mixed_selection",
+        default=False,
+        type=str2bool,
+        help="Use conjunctive [z*r, z*(1-r)] action-outcome representation for the high-level RNN.",
+    )
 
     p.add_argument("--depth_sensor", default=False, type=bool, help="having extra depth sensor")
     p.add_argument(

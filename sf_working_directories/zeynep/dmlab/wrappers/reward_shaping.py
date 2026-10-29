@@ -110,6 +110,14 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
             info["hi_miss_history"] = self.hi_miss_history.copy()
             info["lo_hit_history"] = self.lo_hit_history.copy()
             info["lo_miss_history"] = self.lo_miss_history.copy()
+
+            total_trials = (existing_extra_stats.get("custom/highrew_hit", 0) + existing_extra_stats.get("custom/highrew_miss", 0) +
+                             existing_extra_stats.get("custom/lowrew_hit", 0) + existing_extra_stats.get("custom/lowrew_miss", 0))
+            roundtrip_frames = float(self.episode_length) / max(1.0, float(total_trials))
+            info["episode_extra_stats"]["custom/roundtrip_frames"] = roundtrip_frames
+
+            hi_hit = float(existing_extra_stats.get("custom/highrew_hit", 0.0))
+            info["episode_extra_stats"]["success_roundtrip_rate"] = (hi_hit * 25000.0) / self.episode_length # High-reward round trips per 1000 frames
             ##########
 
             # log.info(f'Episode Extra Stats: {info["episode_extra_stats"]}')

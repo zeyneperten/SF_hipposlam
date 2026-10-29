@@ -56,7 +56,7 @@ class MlpDecoderOrthogonalJit(Decoder):
         if self.context_dim > 1:
             with torch.no_grad():
                 # Makes the context columns mutually perpendicular
-                nn.init_orthogonal_(self.first_linear.weight[:,-self.context_dim:], gain=1.0)
+                nn.init.orthogonal_(self.first_linear.weight[:,-self.context_dim:], gain=1.0)
 
         if len(decoder_layers) > 0 and cfg.use_jit:
             self.mlp = torch.jit.script(self.mlp)
@@ -95,6 +95,10 @@ class MlpDecoderOrthogonalJit(Decoder):
 ### ADDED Context modulated by FiLM (Feature-wise Linear Modulation)
 # FiLM after MLP 
 # 26.10.26
+class FiLMLinear(nn.Linear):
+    """Subclass so ActorCritic.initialize_weights doesn't overwrite our zero-weights."""
+    pass
+
 class MlpDecoderFiLMJit(Decoder):
     def __init__(self, cfg: Config, decoder_input_size: int, context_dim: int = 0):
         super().__init__(cfg)
@@ -111,8 +115,8 @@ class MlpDecoderFiLMJit(Decoder):
         self.decoder_out_size = calc_num_elements(self.mlp, (decoder_input_size,))
 
         if context_dim > 0:
-            self.film_gamma = nn.Linear(context_dim, self.decoder_out_size)
-            self.film_beta = nn.Linear(context_dim, self.decoder_out_size)
+            self.film_gamma = FiLMLinear(context_dim, self.decoder_out_size)
+            self.film_beta = FiLMLinear(context_dim, self.decoder_out_size)
 
             # Both start at 0 so residual (1.0 + gamma) starts at 1.0
             self.init_film_identity()

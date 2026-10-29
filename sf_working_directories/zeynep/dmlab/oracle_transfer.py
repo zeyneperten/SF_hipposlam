@@ -282,6 +282,7 @@ def load_oracle_controller(actor_critic, checkpoint):
         "core.high_level_rnn_stage1.",
         "hl_diversity_classifier.",
         "encoder.hl_mode_embed_layer.",
+        "core.decoder.",
     )
     if unexpected or any(not key.startswith(allowed_missing_prefixes) for key in missing):
         raise ValueError(f"Unexpected transfer state: missing={missing}, unexpected={unexpected}")
