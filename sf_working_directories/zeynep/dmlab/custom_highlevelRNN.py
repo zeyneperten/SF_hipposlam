@@ -450,6 +450,9 @@ class HighLevelContextRNN_Learner(nn.Module):
         representations: bool = False,
         d_rep: int = 64,
         mixed_selection: bool = False,  
+        multiplicative_input: bool = False,
+        use_mlp: bool = False,
+        mlp_dim: int = 16,
     ):
         super().__init__()
         self.K = K
@@ -460,12 +463,33 @@ class HighLevelContextRNN_Learner(nn.Module):
         self.representations = representations  # If True, the model will get representations from decoder 1st layer
         self.d_rep = d_rep  # Dimension of the representation vector
         self.mixed_selection = mixed_selection  # If True, the model will use a mix of deterministic and stochastic selection
+        self.multiplicative_input = multiplicative_input  # If True, the input will be multiplied by the hidden state
+        self.use_mlp = use_mlp  # If True, the model will use an MLP to process the input
+        self.mlp_dim = mlp_dim  # Dimension of the MLP
 
-        mode_dim = (2 * K) if self.mixed_selection else (K + 1) # 2 * K won and lost modes, otherwise z and r additively
-        if self.representations:
-            input_dim = mode_dim+ (2 * self.d_rep)  # z_prev + prev_reward + 2 * representation size = 2 + 1 + 128 = 131
+        if self.multiplicative_input:
+            mode_dim = 2 * K + 1 
+        elif self.mixed_selection:
+            mode_dim = 2 * K 
         else:
-            input_dim = mode_dim  # z_prev + prev_reward
+            mode_dim = K + 1  # z_prev + prev_reward 
+        
+        if self.representations:
+            raw_input_dim = mode_dim+ (2 * self.d_rep)  # z_prev + prev_reward + 2 * representation size = 2 + 1 + 128 = 131
+        else:
+            raw_input_dim = mode_dim  # z_prev + prev_reward
+
+        if self.use_mlp:
+            self.mlp = nn.Sequential(
+                nn.Linear(raw_input_dim, self.mlp_dim),
+                nn.ReLU(),
+                nn.Linear(self.mlp_dim, self.mlp_dim),
+                nn.ReLU(),
+            )
+            input_dim = self.mlp_dim  # Update input dimension for RNN cell after MLP
+        else:
+            self.mlp = None
+            input_dim = raw_input_dim  # No change in input dimension for RNN cell
 
         self.rnn_cell = nn.RNNCell(input_size=input_dim, hidden_size=d_H, nonlinearity="tanh")
 
@@ -529,16 +553,22 @@ class HighLevelContextRNN_Learner(nn.Module):
             z_won = z_prev * r_col  # element-wise multiplication to get the "won" mode
             z_lost = z_prev * (1 - r_col)  # element-wise multiplication to get the "lost" mode
             mode_inputs = [z_won, z_lost]
+        elif self.multiplicative_input:
+            mode_inputs = [z_prev, r_col, z_prev * r_col]  # include the multiplicative interaction term
         else:
             mode_inputs = [z_prev, r_col]
 
         if self.representations:
             if e_trigger is None or e_outcome is None:
                 raise ValueError("representations=True requires both e_trigger and e_outcome")
-
-            rnn_in = torch.cat(mode_inputs + [e_trigger, e_outcome], dim=-1)
+            raw_in = torch.cat(mode_inputs + [e_trigger, e_outcome], dim=-1)
         else:
-            rnn_in = torch.cat(mode_inputs, dim=-1)
+            raw_in = torch.cat(mode_inputs, dim=-1)
+
+        if self.use_mlp:
+            rnn_in = self.mlp(raw_in)
+        else:
+            rnn_in = raw_in  # No change in input dimension for RNN cell
 
         h_candidate = self.rnn_cell(rnn_in, h_high)
         h_high_new = torch.where(outcome_mask[:, None], h_candidate, h_high)

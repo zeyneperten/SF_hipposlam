@@ -32,6 +32,8 @@ from sf_working_directories.zeynep.dmlab.dmlab_level_cache import DmlabLevelCach
 from sf_working_directories.zeynep.dmlab.dmlab_params import add_dmlab_env_args, dmlab_override_defaults
 from sf_working_directories.zeynep.dmlab.oracle_transfer import prepare_oracle_transfer
 from sf_working_directories.zeynep.dmlab.oracle_transfer_learner import make_oracle_transfer_learner
+from sf_working_directories.zeynep.dmlab.hl_transfer import prepare_hl_transfer
+from sf_working_directories.zeynep.dmlab.hl_transfer_learner import make_hl_transfer_learner
 
 
 class DmlabEnvWithCache:
@@ -58,7 +60,11 @@ def register_dmlab_components(level_caches: Optional[DmlabLevelCaches] = None, c
         global_model_factory().register_actor_critic_factory(make_hipposlam_actor_critic)
 
     if getattr(cfg, "hl_dg_from_prev_z", False):
-        global_learner_factory().register_learner_factory(make_oracle_transfer_learner)
+        if getattr(cfg, "oracle_init_checkpoint", None):
+            global_learner_factory().register_learner_factory(make_oracle_transfer_learner)
+        elif getattr(cfg, "hl_init_checkpoint", None):
+            global_learner_factory().register_learner_factory(make_hl_transfer_learner)
+
 
     # global_learner_factory().register_learner_factory(make_hipposlam_learner)
 
@@ -110,6 +116,14 @@ def parse_dmlab_args(argv=None, evaluation=False):
         has_target_checkpoint = cfg.restart_behavior == "resume" and any(target_dir.glob("checkpoint_p*/*.pth"))
         if not has_target_checkpoint:
             prepare_oracle_transfer(cfg)
+
+    elif getattr(cfg, "hl_init_checkpoint", None):
+        # A target run's own checkpoint and saved configuration take precedence.
+        # In particular, resuming must not require the original HLRNN file.
+        target_dir = Path(experiment_dir(cfg, mkdir=False))
+        has_target_checkpoint = cfg.restart_behavior == "resume" and any(target_dir.glob("checkpoint_p*/*.pth"))
+        if not has_target_checkpoint:
+            prepare_hl_transfer(cfg)
     #maybe_overwrite_rnn_size(cfg)
     return cfg
 

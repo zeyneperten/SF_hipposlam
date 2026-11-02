@@ -197,12 +197,27 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         help="How the high-level mode vector modulates DG projection. ",
     )
     ###################
+    # 30.10.2026 ADDED High Level RNN input options
     p.add_argument(
         "--hl_mixed_selection",
         default=False,
         type=str2bool,
         help="Use conjunctive [z*r, z*(1-r)] action-outcome representation for the high-level RNN.",
     )
+    p.add_argument("--hl_multiplicative_input",
+                   default=False,
+                   type=str2bool,
+                   help="Use multiplicative interaction term z*r as an additional input to the high-level RNN.")
+    p.add_argument("--hl_use_mlp",
+                   default=False,
+                   type=str2bool,
+                   help="Use an MLP to process the high-level RNN inputs before feeding them into the RNN cell.")
+    p.add_argument("--hl_mlp_dim",
+                   default=16,
+                   type=int,
+                   help="Hidden dimension of the MLP used for processing high-level RNN inputs.")
+    p.add_argument("--hl_init_checkpoint", default=None, type=str, help="Path to a .pth checkpoint for initializing the high-level RNN.")
+    #######
 
     p.add_argument("--depth_sensor", default=False, type=bool, help="having extra depth sensor")
     p.add_argument(

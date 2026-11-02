@@ -7,6 +7,7 @@ _params = ParamGrid(
         # -------------------------------------------------
         # Seeds
         ("seed", [1111, 2222, 3333, 4444, 5555]),
+        ("hl_is_policy", [True, False]),
         # ("number_instruction_coef", [9, 200]),
         # ("reward_scale", [0.01, 0.1, 1.0]),
         # ("learning_rate", [0.00002, 0.0001]),
@@ -70,7 +71,7 @@ _params = ParamGrid(
 # )
 
 prj = "ymaze_HighLevelRNN_transfer"
-vstr = "1_policy_mixedselection_sig_trigRew_2_23Oct"
+vstr = "2_mlp_sig_trigRew_2_23Oct"
 
 cli = (
     "--env=ymaze_80 "
@@ -150,17 +151,19 @@ cli = (
     "--Decoder_context_mod=enter "
     "--hl_K=2 "
     "--hl_d_H=16 " # if 64, rnn_size is 1756
-    #"--hl_tau=1.0 "  # current behavior; sweep only after checking outcome-reward scale and mode exploration # TAU SET TO 1 GIVES 70% SUCESS, SO LOWER IT
-    "--hl_history_len=8 "
-    "--hl_is_policy=True "  # one-step Q regression on the mode that actually earned each trial reward
+    "--hl_tau=0.2 "  # current behavior; sweep only after checking outcome-reward scale and mode exploration # TAU SET TO 1 GIVES 70% SUCESS, SO LOWER IT
+    "--hl_history_len=20 "
+    #"--hl_is_policy=True "  # one-step Q regression on the mode that actually earned each trial reward
     # "--hl_diversity_reward_coef=0.01 " # at most 0.01 per completed trial, for controller PPO only
     # "--hl_diversity_include_chosen_arm=True " # include the chosen arm in the classifier input for levels that return to an identical center view at outcome
     "--reward_scale=0.1 "  # default 1 LOWERED BECAUSE OF TOO HIGH VALUE LOSS
     # "--context_injection_coef=200 "
     "--hl_DG_mod=sigmoid "
     "--oracle_freeze_controller=False "
-    "--hl_mixed_selection=True "
     "--hl_dg_from_prev_z=True "
+    #"--hl_multiplicative_input=True "
+    "--hl_use_mlp=True "
+    "--hl_mlp_dim=16 "
     "--oracle_init_checkpoint=/work/classic/fr_ze12-data2/ymaze_ablation/80_rew/run2_trigRew/train_dir/2_80_trigRew/2_80_trigRew_/00_2_80_trigRew_see_1111_D.c.mod_sigmoid_D.c.mod_enter/checkpoint_p0/checkpoint_000031560_255590400.pth "
 )
 

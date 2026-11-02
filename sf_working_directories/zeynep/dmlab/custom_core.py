@@ -670,7 +670,10 @@ class HighLevelRNNWrapperCore(ModelCore):
             deterministic=getattr(cfg, "hl_deterministic", False),
             representations=self.representations,
             d_rep=self.d_rep,
-            mixed_selection=getattr(cfg, "hl_mixed_selection", False)
+            mixed_selection=getattr(cfg, "hl_mixed_selection", False),
+            multiplicative_input = getattr(cfg, "hl_multiplicative_input", False),
+            use_mlp = getattr(cfg, "hl_use_mlp", False),
+            mlp_dim = getattr(cfg, "hl_mlp_dim", 16),
         )
 
         # self.total_state_size = self.base_state_size + self.d_H + self.history_size + self.K

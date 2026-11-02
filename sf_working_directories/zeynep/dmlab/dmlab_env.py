@@ -47,6 +47,8 @@ DMLAB_ENVS = [
     DmLabSpec("ymaze_hl_100_alt", "ymaze_vol5_HL_100_alt"),
     DmLabSpec("ymaze_100_alt2", "ymaze_100_final"),
     DmLabSpec("ymaze_80", "ymaze_80_final"),
+    DmLabSpec("ymaze_onearm_R", "ymaze_onearm_R"),
+    DmLabSpec("ymaze_onearm_L", "ymaze_onearm_L"),
     DmLabSpec("openfield_map2_fixed_loc3", "openfield_map2_fixed_loc3"),
     DmLabSpec("openfield_map2_fixed_loc1", "hippodunk/openfield_map2_fixed_loc1"),
     DmLabSpec("openfield_map2_fixed_loc2", "hippodunk/openfield_map2_fixed_loc2"),
