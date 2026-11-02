@@ -943,18 +943,6 @@ class HipposlamEncoder(Encoder):
                 tmp_out = self.DG_projection(x) * embedded_mode
 
             elif self.hl_DG_mod == "concat":
-                if hl_z.dim() == 2 and hl_z.shape[-1] > 1:
-                    instr = hl_z.argmax(dim=-1, keepdim=True) + 1
-                else:
-                    instr = hl_z
-
-                mode_encoded = (
-                    torch.nn.functional.one_hot(
-                        torch.clamp(instr.squeeze(1) - 1, 0, self.hl_K - 1).long(), num_classes=self.hl_K
-                    )
-                    * self.number_instruction_coef
-                ).to(device=x.device, dtype=x.dtype)
-
                 x_cat = torch.cat((x, mode_encoded), dim=1)
                 tmp_out = self.DG_projection(x_cat)
 

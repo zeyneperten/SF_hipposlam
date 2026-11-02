@@ -8,9 +8,80 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from sample_factory.utils.utils import log
-
 # HighLevelContextRNN  —  §16, §18
+
+
+class TrialHistory:
+    """Completed-trial replay shared by the full core and standalone experiments.
+
+    Each flat record stores the pre-event hidden state, selected mode, reward,
+    optional trigger/outcome representations, and a validity flag. The saved
+    hidden state is a detached starting point for truncated recurrent replay.
+    This object owns no model parameters, keeping learner checkpoint keys intact.
+    """
+
+    def __init__(self, K: int, d_H: int, history_len: int, representations: bool = False, d_rep: int = 64):
+        if history_len < 1:
+            raise ValueError("hl_history_len must be at least one completed trial")
+        self.K = K
+        self.d_H = d_H
+        self.history_len = history_len
+        self.representations = representations
+        self.d_rep = d_rep
+        self.event_width = d_H + K + 2 + (2 * d_rep if representations else 0)
+        self.history_size = history_len * self.event_width
+
+    def append_event(
+        self, history, h_before, z_before, reward, event_mask, e_trigger: Tensor = None, e_outcome: Tensor = None
+    ):
+        """Append a completed trial only when an event and a prior mode exist."""
+        valid_flag = torch.ones_like(reward[:, None])
+        if self.representations:
+            if e_trigger is None or e_outcome is None:
+                raise ValueError("e_trigger and e_outcome must be provided when representations are enabled")
+            entry = torch.cat(
+                (
+                    h_before.detach(),
+                    z_before.detach(),
+                    reward[:, None],
+                    e_trigger.detach(),
+                    e_outcome.detach(),
+                    valid_flag,
+                ),
+                dim=-1,
+            )
+        else:
+            entry = torch.cat((h_before.detach(), z_before.detach(), reward[:, None], valid_flag), dim=-1)
+        shifted = torch.cat((history[:, self.event_width :], entry), dim=-1)
+        valid_outcome = event_mask & (z_before.sum(dim=-1) > 0.5)
+        return torch.where(valid_outcome[:, None], shifted, history)
+
+    def scores_from_history(self, learner, history, fallback_h):
+        """Replay saved modes/rewards under current weights without resampling.
+
+        To score the action whose outcome has just arrived, pass the history
+        saved before that outcome; append its reward only after scoring it.
+        """
+        events = history.reshape(-1, self.history_len, self.event_width)
+        valid = events[:, :, -1] > 0.5
+        first = valid.int().argmax(dim=1)
+        batch = torch.arange(events.size(0), device=events.device)
+        h = torch.where(valid.any(dim=1, keepdim=True), events[batch, first, : self.d_H], fallback_h)
+
+        for k in range(self.history_len):
+            event = events[:, k]
+            z = event[:, self.d_H : self.d_H + self.K]
+            reward = event[:, self.d_H + self.K]
+            if self.representations:
+                trig_start = self.d_H + self.K + 1
+                trig_end = trig_start + self.d_rep
+                out_end = trig_end + self.d_rep
+                h = learner.update_state(
+                    valid[:, k], reward, h, z, event[:, trig_start:trig_end], event[:, trig_end:out_end]
+                )
+            else:
+                h = learner.update_state(valid[:, k], reward, h, z)
+        return learner.head(h)
 
 
 class HighLevelContextRNN_Stage1(nn.Module):
