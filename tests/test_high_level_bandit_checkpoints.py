@@ -76,6 +76,9 @@ def test_standalone_round_trip_preserves_exact_manager_and_metadata(tmp_path, re
         d_rep=4,
         history_len=2,
         mode_to_arm=[1, 0],
+        multiplicative_input=False,
+        use_mlp=False,
+        mlp_dim=16,
     )
     for key, tensor in source.state_dict().items():
         assert torch.equal(tensor, restored.state_dict()[key])

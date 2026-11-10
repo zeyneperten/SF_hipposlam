@@ -34,8 +34,8 @@ mpl.rcParams["savefig.bbox"] = "tight"
 # )
 # output_dir = "/work/classic/fr_ze12-data2/ymaze_CTRL/08_encoderonly_norew_INSTR_see_2222_l.rat_2e-05_D.c.mod_sigmoid"
 
-csv_path = "/work/classic/fr_ze12-data2/outputs/telemetry_plots/42_noINSTR_see_5555_r.sca_1.0_l.rat_2e-05/telemetry/pose_20261021_160031.csv"
-output_dir = "/work/classic/fr_ze12-data2/ymaze_CTRL/42_noINSTR_see_5555_r.sca_1.0_l.rat_2e-05"
+csv_path = "/work/classic/fr_ze12-data2/ymaze_HLRNN/mlp/run1/train_dir/1_mlp/1_mlp_/01_1_mlp_see_1111_h.tau_0.2_h.i.pol_False/telemetry/pose_20261103_153215.csv"
+output_dir = "/work/classic/fr_ze12-data2/outputs/HL_RNN_raw/01_1_mlp_see_1111_h.tau_0.2_h.i.pol_False"
 
 pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 

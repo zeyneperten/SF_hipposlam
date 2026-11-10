@@ -129,13 +129,16 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
         type=str2bool,
         help="Whether to learn the decay factor for the context RNN's value state via backpropagation.",
     )
-    ##      High Level RNN parameters      ##
+    ##      High Level RNN parameters      #
+    # This hl_init_checkpoint must be used together with oracle_init_checkpoint since it alone doenst transfer low level weights.
     p.add_argument(
         "--hl_init_checkpoint",
         default=None,
         type=str,
         help="Weights-only manager initialization from a standalone bandit or full checkpoint; target resume takes precedence.",
     )
+    # This hl_transfer_checkpoint transfers all the weights
+    p.add_argument("--hl_transfer_checkpoint", default=None, type=str, help="Weights-only manager initialization from a standalone bandit or full checkpoint; target resume takes precedence.")
     p.add_argument("--hl_K", default=4, type=int, help="Number of modes for the high-level RNN.")
     p.add_argument("--hl_d_H", default=16, type=int, help="Dimension of the high-level RNN's hidden state.")
     p.add_argument(
@@ -222,7 +225,6 @@ def add_hipposlam_env_args(parser: argparse.ArgumentParser) -> None:
                    default=16,
                    type=int,
                    help="Hidden dimension of the MLP used for processing high-level RNN inputs.")
-    p.add_argument("--hl_init_checkpoint", default=None, type=str, help="Path to a .pth checkpoint for initializing the high-level RNN.")
     #######
 
     p.add_argument("--depth_sensor", default=False, type=bool, help="having extra depth sensor")

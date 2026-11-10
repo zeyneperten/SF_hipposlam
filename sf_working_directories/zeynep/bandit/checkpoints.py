@@ -15,7 +15,7 @@ from sf_working_directories.zeynep.dmlab.custom_highlevelRNN import HighLevelCon
 
 FORMAT = "simgay_high_level_weights"
 VERSION = 1
-MODEL_FIELDS = ("K", "d_H", "is_policy", "tau", "representations", "d_rep")
+MODEL_FIELDS = ("K", "d_H", "is_policy", "tau", "representations", "d_rep", "multiplicative_input", "use_mlp", "mlp_dim")
 
 
 def _manager(model):
@@ -32,14 +32,18 @@ def _manager(model):
 
 def _validate_metadata(metadata):
     metadata = dict(metadata)
+    metadata.setdefault("multiplicative_input", False)
+    metadata.setdefault("use_mlp", False)
+    metadata.setdefault("mlp_dim", 16)
+
     required = (*MODEL_FIELDS, "history_len", "mode_to_arm")
     missing = sorted(set(required) - metadata.keys())
     if missing:
         raise ValueError(f"High-level checkpoint metadata is missing: {missing}")
-    for key in ("K", "d_H", "d_rep", "history_len"):
+    for key in ("K", "d_H", "d_rep", "history_len", "mlp_dim"):
         if type(metadata[key]) is not int or metadata[key] < 1:
             raise ValueError(f"Checkpoint {key} must be a positive integer")
-    for key in ("is_policy", "representations"):
+    for key in ("is_policy", "representations", "multiplicative_input", "use_mlp"):
         if type(metadata[key]) is not bool:
             raise ValueError(f"Checkpoint {key} must be a boolean")
     tau = metadata["tau"]
@@ -132,6 +136,9 @@ def read_checkpoint(path):
                 "d_rep": cfg.get("hl_d_rep", 64),
                 "history_len": cfg.get("hl_history_len", 8),
                 "mode_to_arm": cfg.get("hl_mode_to_arm"),
+                "multiplicative_input": cfg.get("hl_multiplicative_input", False),
+                "use_mlp": cfg.get("hl_use_mlp", False),
+                "mlp_dim": cfg.get("hl_mlp_dim", 16),
             }
         )
     return state, metadata

@@ -207,7 +207,7 @@ class MlpDecoderAdditiveJit(Decoder):
 
 
 def make_hipposlam_decoder(cfg: Config, core_input_size: int) -> Decoder:
-    if cfg.core_name == "BypassSS_HighLevelRNN":
+    if cfg.core_name in ("BypassSS_HighLevelRNN", "BypassSS_HighLevelShiftRegister"):
         # The high-level core appends hl_K one-hot mode values in both oracle
         # and learned runs. Split exactly those values from the base output.
         context_size = cfg.hl_K

@@ -644,3 +644,202 @@ class HighLevelContextRNN_Learner(nn.Module):
         h_candidate = self.rnn_cell(rnn_in, h_high)
         h_high_new = torch.where(outcome_mask[:, None], h_candidate, h_high)
         return h_high_new
+
+class HighLevelShiftRegister_Learner(nn.Module):
+    """
+    High-Level Decision Maker with Temporal-Weighted Shift Register:
+      1. Input MLP:          (hl_K + 1) -> d_H
+      2. 16-Slot Register:   holds 16 trials in rnn_states (16 * (hl_K + 1) floats)
+      3. Temporal Weighting: learns temporal filter across time (16 -> 1), producing d_H
+      4. Output MLP:         d_H -> d_H (strictly symmetric dimensions!)
+      5. Decision Head:      d_H -> K (Q-values or Policy Logits)
+    """
+
+    def __init__(
+        self,
+        K: int = 2,
+        history_len: int = 16,  # Number of completed trials (i.e slots in the register) that are remembered. It is the TIME
+        d_H: int = 16,          # Dimensions for MLP and shift register
+        tau: float = 1.0,
+        is_policy: bool = False,
+        deterministic: bool = False,
+        representations: bool = False,
+        d_rep: int = 64,
+    ):
+        super().__init__()
+        self.K = K
+        self.history_len = history_len 
+        self.d_H = d_H
+        self.tau = tau
+        self.is_policy = is_policy
+        self.deterministic = deterministic
+        self.representations = representations
+        self.d_rep = d_rep
+
+        # Raw event size per trial: [z (K) + reward (1) + optional reps]
+        # Dynamically sized: for K=2, raw_event_dim = 3
+        if self.representations:
+            self.raw_event_dim = K + 1 + (2 * self.d_rep)
+        else:
+            self.raw_event_dim = K + 1
+
+        # Total state size stored in rnn_states (e.g. 64 * 3 = 192 floats)
+        self.total_state_size = self.history_len * self.raw_event_dim
+
+        # -----------------------------------------------------------------
+        # 1. INPUT MLP: Encodes each individual trial outcome into d_H
+        # (raw_event_dim) -> d_H -> d_H
+        # -----------------------------------------------------------------
+        self.input_mlp = nn.Sequential(
+            nn.Linear(self.raw_event_dim, d_H),
+            nn.ReLU(),
+            nn.Linear(d_H, d_H),
+            nn.ReLU(),
+        )
+
+        # -----------------------------------------------------------------
+        # 2. TEMPORAL WEIGHTING: Collapses the memory buffer slots across time into 1 summary
+        # Learns recency, decay, and change-detection curves across trials
+        # -----------------------------------------------------------------
+        self.temporal_weights = nn.Linear(self.history_len, 1, bias=False)
+        # Initialize with gentle decay (recent slots slightly favored initially)
+        with torch.no_grad():
+            init_weights = torch.linspace(1.0, 0.1, self.history_len).unsqueeze(0)
+            self.temporal_weights.weight.copy_(init_weights / init_weights.sum())
+
+        # -----------------------------------------------------------------
+        # 3. OUTPUT MLP: Context Readout (strictly d_H -> d_H)
+        # -----------------------------------------------------------------
+        self.output_mlp = nn.Sequential(
+            nn.Linear(d_H, d_H),
+            nn.LayerNorm(d_H),
+            nn.ReLU(),
+            nn.Linear(d_H, d_H),
+            nn.ReLU(),
+        )
+
+        # 4. DECISION HEAD: d_H -> K
+        self.head = nn.Linear(d_H, K)
+
+    @property
+    def state_size(self) -> int:
+        return self.total_state_size
+
+    def update_state(
+        self,
+        outcome_mask: Tensor,
+        prev_trial_reward: Tensor,
+        register_state: Tensor,
+        z_prev: Tensor,
+        e_trigger: Tensor = None,
+        e_outcome: Tensor = None,
+    ) -> Tensor:
+        """
+        Shifts the register by 1 on outcome_mask == True.
+        Frozen on all other navigation frames.
+        """
+        B = z_prev.size(0)
+
+        # 1. Build trial record
+        if self.representations:
+            if e_trigger is None or e_outcome is None:
+                raise ValueError("representations=True requires both e_trigger and e_outcome")
+            new_event = torch.cat([z_prev, prev_trial_reward[:, None], e_trigger, e_outcome], dim=-1)
+        else:
+            new_event = torch.cat([z_prev, prev_trial_reward[:, None]], dim=-1)
+
+        # 2. Reshape and shift right (new event at index 0, drop oldest index 63)
+        reg_3d = register_state.reshape(B, self.history_len, self.raw_event_dim)
+        shifted = torch.cat([new_event.unsqueeze(1), reg_3d[:, :-1, :]], dim=1)
+
+        # 3. Latch: only update on completed trial outcomes
+        reg_new = torch.where(outcome_mask[:, None, None], shifted, reg_3d)
+
+        return reg_new.reshape(B, self.total_state_size)
+
+    def extract_features(self, register_state: Tensor) -> Tensor:
+        """
+        Passes all 64 slots through the Input MLP, aggregates them
+        across time using temporal_weights, and passes through the Output MLP.
+        """
+        B = register_state.size(0)
+
+        # 1. Input MLP: encode each trial slot independently into d_H
+        slots_raw = register_state.reshape(B * self.history_len, self.raw_event_dim)
+        slots_embedded = self.input_mlp(slots_raw)                       # (B * 64, d_H)
+
+        # 2. Reshape to (B, d_H, 64) for temporal weighting
+        slots_3d = slots_embedded.reshape(B, self.history_len, self.d_H)      # (B, 64, d_H)
+        slots_transposed = slots_3d.transpose(1, 2)                      # (B, d_H, 64)
+
+        # 3. Temporal weighting: collapse 64 time steps into 1 summary vector
+        # (B, d_H, 64) @ (64, 1) -> (B, d_H, 1) -> squeeze -> (B, d_H)
+        summary = self.temporal_weights(slots_transposed).squeeze(-1)    # (B, d_H)
+
+        # 4. Output MLP: process temporal context
+        h_latent = self.output_mlp(summary)                              # (B, d_H)
+        return h_latent
+
+    def sample_mode(self, outputs: Tensor) -> Tuple[Tensor, Tensor]:
+        """Samples mode z from Q-values or Policy Logits."""
+        if self.is_policy:
+            log_pi = F.log_softmax(outputs, dim=-1)
+        else:
+            log_pi = F.log_softmax(outputs / self.tau, dim=-1)
+
+        if self.deterministic:
+            z_index = log_pi.argmax(dim=-1)
+        else:
+            z_index = torch.distributions.Categorical(logits=log_pi).sample()
+
+        z_onehot = F.one_hot(z_index, num_classes=self.K).float()
+        return z_onehot, z_index
+
+    def forward(
+        self,
+        outcome_mask: Tensor,
+        prev_trial_reward: Tensor,
+        register_state: Tensor,
+        z_prev: Tensor,
+        chosen_arm: Tensor = None,
+        e_trigger: Tensor = None,
+        e_outcome: Tensor = None,
+    ):
+        # 1. Event-driven update of the shift register
+        register_new = self.update_state(
+            outcome_mask, prev_trial_reward, register_state, z_prev, e_trigger, e_outcome
+        )
+
+        # 2. Extract latent context h via Input MLP + Temporal Weights + Output MLP
+        h_latent = self.extract_features(register_new)
+
+        # 3. Decision scores (Q-values or Policy logits)
+        outputs = self.head(h_latent)
+
+        # 4. Mode sampling and event-driven latching
+        z_candidate, z_candidate_index = self.sample_mode(outputs)
+        z_new = torch.where(outcome_mask[:, None], z_candidate, z_prev)
+
+        z_index_prev = z_prev.argmax(dim=-1)
+        z_index_new = torch.where(outcome_mask, z_candidate_index, z_index_prev)
+
+        new_state = {
+            "high_level_h": h_latent,
+            "register_state": register_new,
+            "current_z": z_new,
+            "current_z_index": z_index_new,
+        }
+
+        # 5. Logging
+        log_dict = compute_log_dict(
+            outputs,
+            z_index_new,
+            h_latent,
+            prev_trial_reward,
+            self.tau,
+            chosen_arm,
+            K=self.K,
+            is_policy=self.is_policy,
+        )
+
+        return register_new, z_new, outputs, new_state, log_dict

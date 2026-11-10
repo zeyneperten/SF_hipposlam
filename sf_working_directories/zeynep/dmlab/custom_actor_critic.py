@@ -59,7 +59,7 @@ def HighLevel_LossWrapper(actor_critic: ActorCritic) -> ActorCritic:
             #selector.deterministic = True  # When passed the 64 rollout frames, make a guess and bypass the sampling of high-level mode. This is only for bootstrapping the value function, not for training the high-level RNN.
 
         ## 11.10.2026 ADDED: propagate latched mode z_prev to encoder before forward_head ##
-        if getattr(actor_critic.cfg, "core_name", None) == "BypassSS_HighLevelRNN":
+        if getattr(actor_critic.cfg, "core_name", None) in ("BypassSS_HighLevelRNN", "BypassSS_HighLevelShiftRegister"):
             normalized_obs_dict = args[0] if len(args) > 0 else kwargs.get("normalized_obs_dict")
             rnn_states = args[1] if len(args) > 1 else kwargs.get("rnn_states")
             if rnn_states is not None:
@@ -78,7 +78,7 @@ def HighLevel_LossWrapper(actor_critic: ActorCritic) -> ActorCritic:
             if selector is not None:
                 selector.deterministic = previous_deterministic
 
-        if getattr(actor_critic.cfg, "core_name", None) == "BypassSS_HighLevelRNN":
+        if getattr(actor_critic.cfg, "core_name", None) in ("BypassSS_HighLevelRNN", "BypassSS_HighLevelShiftRegister"):
             # This is the mode actually used by the actor's decoder at this step.
             # Sample Factory records it alongside actions for learner replay.
             result_dict["hl_z"] = result_dict["new_rnn_states"][:, -actor_critic.cfg.hl_K :].clone()

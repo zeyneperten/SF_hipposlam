@@ -11,9 +11,10 @@ _params = ParamGrid(
         # ("reward_scale", [0.01, 0.1, 1.0]),
         # ("learning_rate", [0.00002, 0.0001]),
         #("seed", [2222]),
-        ("hl_DG_mod", ["sigmoid"]),
-        ("Decoder_context_mod", ["enter"]),
-        ("hl_tau", [0.2, 0.4]),
+        #("hl_DG_mod", ["sigmoid"]),
+        #("Decoder_context_mod", ["enter"]),
+        ("hl_tau", [0.2]),
+        ("hl_is_policy", [True, False]),
         # ("context_injection_coef", [1, 9, 200]),
     ]
 )
@@ -70,10 +71,10 @@ _params = ParamGrid(
 # )
 
 prj = "ymaze_HighLevelRNN_v3"
-vstr = "1oracle_100_lenweight"
+vstr = "2_shiftregister"
 
 cli = (
-    "--env=ymaze_100_alt2 "
+    "--env=ymaze_80 "
     f"--wandb_project={prj} "
     # "--seed=42 "
     "--train_for_seconds=144000 "
@@ -115,7 +116,8 @@ cli = (
     "--env_frameskip=4 "  # lowered from 8
     # "--dmlab_reduced_action_set=True "
     "--dmlab_navigation_action_set=True "
-    "--core_name=BypassSS_HighLevelRNN "  # default was set to ByPassSS or try BypassSS_HighLevelRNN
+    #"--core_name=BypassSS_HighLevelRNN "  # default was set to ByPassSS or try BypassSS_HighLevelRNN
+    "--core_name=BypassSS_HighLevelShiftRegister "  #rnn_size = 1146 + (hist_len * k+1) + K = 1208
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
     "--learning_rate=0.0002 "  # default
@@ -135,7 +137,7 @@ cli = (
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1324 "  # 1166 base + 8 trial records * (16 pre-event h + 4 mode + reward + valid)
+    "--rnn_size=1208 "  # 1166 base (1146+16+K=4) + 8 trial records * (16 pre-event h + 4 mode + reward + valid) (when K=2 this makes 1564)
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 "
     # "--ppo_clip_ratio=0.25 "
@@ -145,18 +147,22 @@ cli = (
     # "--decoder_type=sr_transformer "
     "--reward_input=False "  # add + 1 to rnn size
     "--DG_context_mod=None "
-    "--oracle_context=True "  # set to true if stage1 HL_RNN will use oracle to fix z
-    # "--Decoder_context_mod=enter "
+    "--oracle_context=False "  # set to true if stage1 HL_RNN will use oracle to fix z
+    "--Decoder_context_mod=enter "
     "--hl_K=2 "
     "--hl_d_H=16 "
     # "--hl_tau=1.0 " # current behavior; sweep only after checking outcome-reward scale and mode exploration
-    "--hl_history_len=8 "
-    "--hl_is_policy=False "  # one-step Q regression on the mode that actually earned each trial reward
+    "--hl_history_len=20 "
+    #"--hl_multiplicative_input=True "
+    "--hl_use_mlp=False "
+    #"--hl_mlp_dim=16 "
+    #"--hl_is_policy=True "  # one-step Q regression on the mode that actually earned each trial reward
     # "--hl_diversity_reward_coef=0.01 " # at most 0.01 per completed trial, for controller PPO only
     # "--hl_diversity_include_chosen_arm=True " # include the chosen arm in the classifier input for levels that return to an identical center view at outcome
     "--reward_scale=0.1 "  # default 1 LOWERED BECAUSE OF TOO HIGH VALUE LOSS
     # "--context_injection_coef=200 "
-    # "--hl_DG_mod=gated "
+    "--hl_DG_mod=sigmoid "
+    "--hl_dg_from_prev_z=True "
 )
 
 

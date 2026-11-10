@@ -71,10 +71,10 @@ _params = ParamGrid(
 # )
 
 prj = "ymaze_HighLevelRNN_curriculum"
-vstr = "2_onlyL_transfer_03_Q"
+vstr = "3_100alt_muliplicativeQ_transfer_nooracle_04"
 
 cli = (
-    "--env=ymaze_onearm_L "
+    "--env=ymaze_100_alt2 "
     f"--wandb_project={prj} "
     # "--seed=42 "
     "--train_for_seconds=144000 "
@@ -153,7 +153,7 @@ cli = (
     "--hl_d_H=16 " # if 64, rnn_size is 1756
     "--hl_tau=0.2 "  # current behavior; sweep only after checking outcome-reward scale and mode exploration # TAU SET TO 1 GIVES 70% SUCESS, SO LOWER IT
     "--hl_history_len=20 "
-    "--hl_is_policy=False "  # one-step Q regression on the mode that actually earned each trial reward
+    #"--hl_is_policy=False "  # one-step Q regression on the mode that actually earned each trial reward
     # "--hl_diversity_reward_coef=0.01 " # at most 0.01 per completed trial, for controller PPO only
     # "--hl_diversity_include_chosen_arm=True " # include the chosen arm in the classifier input for levels that return to an identical center view at outcome
     "--reward_scale=0.1 "  # default 1 LOWERED BECAUSE OF TOO HIGH VALUE LOSS
@@ -162,10 +162,9 @@ cli = (
     #"--oracle_freeze_controller=False "
     "--hl_dg_from_prev_z=True "
     "--hl_multiplicative_input=True "
-    "--hl_init_checkpoint=/work/classic/fr_ze12-data2/ymaze_HLRNN/curriculum/run1_R/train_dir/1_onlyR/1_onlyR_/03_1_onlyR_see_2222_h.i.pol_False/checkpoint_p0/best_000015264_119439360_lenweighted_score_666.489.pth "
     #"--hl_use_mlp=True "
+    "--hl_transfer_checkpoint=/work/classic/fr_ze12-data2/ymaze_HLRNN/curriculum/run2_L_multiplicativeQ/train_dir/2_onlyL_transfer_03_Q/2_onlyL_transfer_03_Q_/04_2_onlyL_transfer_03_Q_see_5555/checkpoint_p0/best_000018304_142278656_lenweighted_score_689.263.pth "
     #"--hl_mlp_dim=16 "
-    #"--oracle_init_checkpoint=/work/classic/fr_ze12-data2/ymaze_ablation/80_rew/run2_trigRew/train_dir/2_80_trigRew/2_80_trigRew_/00_2_80_trigRew_see_1111_D.c.mod_sigmoid_D.c.mod_enter/checkpoint_p0/checkpoint_000031560_255590400.pth "
 )
 
 _experiments = []

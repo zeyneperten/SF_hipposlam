@@ -56,15 +56,11 @@ def register_dmlab_components(level_caches: Optional[DmlabLevelCaches] = None, c
     global_model_factory().register_model_core_factory(make_hipposlam_core)
     global_model_factory().register_decoder_factory(make_hipposlam_decoder)
 
-    if cfg.core_name == "BypassSS_HighLevelRNN":
+    if cfg.core_name in ("BypassSS_HighLevelRNN", "BypassSS_HighLevelShiftRegister"):
         global_model_factory().register_actor_critic_factory(make_hipposlam_actor_critic)
 
-    if getattr(cfg, "hl_dg_from_prev_z", False):
-        if getattr(cfg, "oracle_init_checkpoint", None):
-            global_learner_factory().register_learner_factory(make_oracle_transfer_learner)
-        elif getattr(cfg, "hl_init_checkpoint", None):
-            global_learner_factory().register_learner_factory(make_hl_transfer_learner)
-
+    if getattr(cfg, "hl_dg_from_prev_z", False) or getattr(cfg, "hl_init_checkpoint", None):
+        global_learner_factory().register_learner_factory(make_oracle_transfer_learner)
 
     # global_learner_factory().register_learner_factory(make_hipposlam_learner)
 
@@ -117,7 +113,7 @@ def parse_dmlab_args(argv=None, evaluation=False):
         if not has_target_checkpoint:
             prepare_oracle_transfer(cfg)
 
-    elif getattr(cfg, "hl_init_checkpoint", None):
+    elif getattr(cfg, "hl_transfer_checkpoint", None):
         # A target run's own checkpoint and saved configuration take precedence.
         # In particular, resuming must not require the original HLRNN file.
         target_dir = Path(experiment_dir(cfg, mkdir=False))

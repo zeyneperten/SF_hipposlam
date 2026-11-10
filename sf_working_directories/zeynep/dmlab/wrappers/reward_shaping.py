@@ -117,7 +117,10 @@ class DmlabRewardShapingWrapper(gym.Wrapper):
             info["episode_extra_stats"]["custom/roundtrip_frames"] = roundtrip_frames
 
             hi_hit = float(existing_extra_stats.get("custom/highrew_hit", 0.0))
+            roundtrip_rate = (hi_hit * 25000.0) / self.episode_length  if self.episode_length > 0 else 0.0
+            flexible_rate = max(0.0, existing_extra_stats.get("custom/flexibility", 0.0)) * roundtrip_rate
             info["episode_extra_stats"]["success_roundtrip_rate"] = (hi_hit * 25000.0) / self.episode_length # High-reward round trips per 1000 frames
+            info["episode_extra_stats"]["flexible_roundtrip_rate"] = flexible_rate # Flexible round trips per 1000 frames
             ##########
 
             # log.info(f'Episode Extra Stats: {info["episode_extra_stats"]}')

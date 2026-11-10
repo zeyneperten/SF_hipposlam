@@ -46,9 +46,9 @@ def _ensure_parent(path: pathlib.Path):
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-mapname = "ymaze_instr"
-expname = "84_sigmoid_norew_INSTR_see_5555_n.i.coe_200_r.sca_0.1_l.rat_2e-05"
-train_dir = "/work/classic/fr_ze12-data2/ymaze_CTRL/norew_INSTR/new_modulate/sigmoid_run2_grid/train_dir/sigmoid_norew_INSTR/sigmoid_norew_INSTR_"
+mapname = "ymaze_onearm_R"
+expname = "05_1_onlyR_see_3333_h.i.pol_False"
+train_dir = "/work/classic/fr_ze12-data2/ymaze_HLRNN/curriculum/run1_R/train_dir/1_onlyR/1_onlyR_"
 
 cli = [
     "--algo",
@@ -75,19 +75,34 @@ cli = [
     "True",
     "--no_render",  # <-- skip human window; avoid X11 on servers
     "--oracle_context",
-    "True",
+    "False",
     "--DG_context_mod",
-    "sigmoid",
+    "None",
     "--Decoder_context_mod",
     "enter",
+    "--hl_DG_mod",
+    "sigmoid",
     "--rnn_size",
-    "1149",
+    "1564",
     "--core_name",
-    "BypassSS",
+    "BypassSS_HighLevelRNN",
     "--reward_scale",
     "0.1",
     "--learning_rate",
     "0.00002",
+    "--hl_use_mlp", "False",
+    "--hl_multiplicative_input", "True",
+    #"--hl_mlp_dim", "16",
+    "--hl_history_len",
+    "20",
+    "--hl_is_policy",
+    "False",
+    "--hl_K",
+    "2",
+    "--hl_d_H",
+    "16",
+    "--hl_dg_from_prev_z",
+    "True"
 ]
 
 cli_dict = {
@@ -103,13 +118,22 @@ cli_dict = {
     "no_render": True,
     "use_jit": False,
     "with_pos_obs": True,
-    "oracle_context": True,
-    "DG_context_mod": "sigmoid",
+    "oracle_context": False,
+    "DG_context_mod": "None",
     "Decoder_context_mod": "enter",
-    "rnn_size": 1149,
-    "core_name": "BypassSS",
+    "rnn_size": 1564,
+    "core_name": "BypassSS_HighLevelRNN",
     "reward_scale": 0.1,
     "learning_rate": 0.00002,
+    "hl_DG_mod": "sigmoid",
+    "hl_multiplicative_input": True,
+    "hl_use_mlp": False,
+    #"hl_mlp_dim": 16,
+    "hl_history_len": 20,
+    "hl_is_policy": False,
+    "hl_K": 2,
+    "hl_d_H": 16,
+    "hl_dg_from_prev_z": True
 }
 
 
@@ -288,6 +312,9 @@ with torch.no_grad():
                         "context": current_context,
                         # keep the whole info dict as a JSON string for convenience
                         "info": json.dumps(infos[agent_i], default=str),
+                        "reward": float(rew[agent_i].item()),
+                        "highrew_hit": bool(infos[agent_i].get("highrew_hit", False)),
+                        "chosen_arm": int(infos[agent_i].get("chosen_arm", -1)),
                     }
                 )
 

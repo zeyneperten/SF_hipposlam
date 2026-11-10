@@ -59,12 +59,16 @@ def prepare_oracle_transfer(cfg):
         )
 
     expected = {
-        "core_name": "BypassSS",
         "with_number_instruction": True,
         "decoder_type": "mlp",
         "actor_critic_share_weights": True,
         "reward_input": False,
     }
+
+    if source.get("core_name") not in ("BypassSS_HighLevelRNN", "BypassSS"):
+        raise ValueError(
+            f"Incompatible oracle checkpoint: core_name must be BypassSS_HighLevelRNN or BypassSS, got {source.get('core_name')!r}"
+        )
     for key, value in expected.items():
         actual = source.get(key, False if key == "reward_input" else None)
         if actual != value:

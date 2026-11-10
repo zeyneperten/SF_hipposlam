@@ -405,6 +405,9 @@ def parser():
     p.add_argument("--test-seed", type=int, default=2_000_007)
     p.add_argument("--init-checkpoint", type=Path, help="Weights-only initialization; CLI model settings must match.")
     p.add_argument("--evaluate-checkpoint", type=Path, help="Evaluation only; model settings come from the checkpoint.")
+    p.add_argument("--multiplicative_input", action="store_true", help="Use multiplicative input to the high-level RNN.")
+    p.add_argument("--use_mlp", action="store_true", help="Use an MLP to process the high-level RNN's hidden state.")
+    p.add_argument("--mlp_dim", type=int, default=16, help="Hidden dimension of the high-level RNN's MLP.")
     return p
 
 
@@ -449,7 +452,7 @@ def main(argv=None):
         )
     else:
         model = HighLevelContextRNN_Learner(
-            K=2, d_H=args.hidden_size, tau=args.tau, is_policy=args.loss == "policy"
+            K=2, d_H=args.hidden_size, tau=args.tau, is_policy=args.loss == "policy", multiplicative_input=args.multiplicative_input, representations=False, use_mlp=args.use_mlp, mlp_dim=args.mlp_dim,
         ).to(args.device)
         if args.init_checkpoint:
             metadata = load_checkpoint_into(model, args.init_checkpoint, expected_mode_to_arm=task.mode_to_arm)
@@ -480,6 +483,9 @@ def main(argv=None):
                 "tau": model.tau,
                 "is_policy": model.is_policy,
                 "representations": model.representations,
+                "multiplicative_input": getattr(model, "multiplicative_input", None),
+                "use_mlp": getattr(model, "use_mlp", None),
+                "mlp_dim": getattr(model, "mlp_dim", 16),
             },
             "observation": "previous mode one-hot and binary outcome only; first trigger uses zero mode/reward",
             "actuator": "mode commands configured arm; independently execute opposite arm on actuator failure",

@@ -22,7 +22,7 @@ def source_config_path(checkpoint):
 
 def prepare_hl_transfer(cfg):
     """Align architecture with the source HLRNN run before Sample Factory initializes."""
-    checkpoint, config_path = source_config_path(cfg.hl_init_checkpoint)
+    checkpoint, config_path = source_config_path(cfg.hl_transfer_checkpoint)
     with config_path.open(encoding="utf-8") as handle:
         source = json.load(handle)
 
@@ -61,7 +61,7 @@ def prepare_hl_transfer(cfg):
             setattr(cfg, key, value)
             cfg.cli_args[key] = value
 
-    cfg.hl_init_checkpoint = str(checkpoint)
+    cfg.hl_transfer_checkpoint = str(checkpoint)
     cfg.core_name = "BypassSS_HighLevelRNN"
     cfg.oracle_context = False
     cfg.hl_dg_from_prev_z = source.get("hl_dg_from_prev_z", True)
