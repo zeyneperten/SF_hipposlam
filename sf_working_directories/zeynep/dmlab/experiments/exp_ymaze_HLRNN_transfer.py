@@ -71,7 +71,7 @@ _params = ParamGrid(
 # )
 
 prj = "ymaze_HighLevelRNN_transfer"
-vstr = "3_manager_mlp_pg_seed7_v2"
+vstr = "2_mlp_02_PG_det"
 
 cli = (
     "--env=ymaze_80 "
@@ -137,7 +137,7 @@ cli = (
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1324 "  # 1166 base + 8 trial records * (16 pre-event h + 4 mode + reward + valid) = 1342
+    "--rnn_size=1564 "  # 1166 base + 8 trial records * (16 pre-event h + 4 mode + reward + valid) = 1342
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 "
     # "--ppo_clip_ratio=0.25 "
@@ -150,9 +150,9 @@ cli = (
     "--oracle_context=False "  # set to true if stage1 HL_RNN will use oracle to fix z
     "--Decoder_context_mod=enter "
     "--hl_K=2 "
-    "--hl_d_H=16 " # if 64, rnn_size is 1756
+    "--hl_d_H=16 " # if 64, rnn_size is 1756 | 8 to parameter match 16 vanillaRNN dimensions
     #"--hl_tau=0.2 "  # current behavior; sweep only after checking outcome-reward scale and mode exploration # TAU SET TO 1 GIVES 70% SUCESS, SO LOWER IT
-    "--hl_history_len=8 "
+    "--hl_history_len=20 "
     "--hl_is_policy=True "  # one-step Q regression on the mode that actually earned each trial reward
     # "--hl_diversity_reward_coef=0.01 " # at most 0.01 per completed trial, for controller PPO only
     # "--hl_diversity_include_chosen_arm=True " # include the chosen arm in the classifier input for levels that return to an identical center view at outcome
@@ -164,8 +164,8 @@ cli = (
     #"--hl_multiplicative_input=True "
     "--hl_use_mlp=True "
     "--hl_mlp_dim=16 "
-    "--oracle_init_checkpoint=/work/classic/fr_ze12-data2/ymaze_ablation/80_rew/run2_trigRew/train_dir/2_80_trigRew/2_80_trigRew_/00_2_80_trigRew_see_1111_D.c.mod_sigmoid_D.c.mod_enter/checkpoint_p0/checkpoint_000031560_255590400.pth "
-    "--hl_init_checkpoint=/home/fr/fr_ze12/SF_hipposlam/train_dir/mlp_pg_seed7_v2/manager_000600000.pt"
+    #"--oracle_init_checkpoint=/work/classic/fr_ze12-data2/ymaze_ablation/80_rew/run2_trigRew/train_dir/2_80_trigRew/2_80_trigRew_/00_2_80_trigRew_see_1111_D.c.mod_sigmoid_D.c.mod_enter/checkpoint_p0/checkpoint_000031560_255590400.pth "
+    "--hl_transfer_checkpoint=/work/classic/fr_ze12-data2/ymaze_HLRNN/deterministic/run1_mlp/train_dir/1_mlp_det/1_mlp_det_/02_1_mlp_det_see_2222_h.i.pol_True_h.tau_0.2/checkpoint_p0/best_000010602_80658432_lenweighted_score_590.485.pth "
 )
 
 _experiments = []

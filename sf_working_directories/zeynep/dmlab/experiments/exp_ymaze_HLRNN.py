@@ -71,7 +71,7 @@ _params = ParamGrid(
 # )
 
 prj = "ymaze_HighLevelRNN_v3"
-vstr = "2_shiftregister"
+vstr = "2_lstm_pmatched"
 
 cli = (
     "--env=ymaze_80 "
@@ -79,7 +79,8 @@ cli = (
     # "--seed=42 "
     "--train_for_seconds=144000 "
     "--algo=APPO "
-    "--gamma=0.99 "
+    "--gamma=0.995 "
+    "--gae_lambda=0.975 "
     "--use_rnn=True "
     "--num_workers=8 "
     "--num_envs_per_worker=4 "
@@ -117,7 +118,7 @@ cli = (
     # "--dmlab_reduced_action_set=True "
     "--dmlab_navigation_action_set=True "
     #"--core_name=BypassSS_HighLevelRNN "  # default was set to ByPassSS or try BypassSS_HighLevelRNN
-    "--core_name=BypassSS_HighLevelShiftRegister "  #rnn_size = 1146 + (hist_len * k+1) + K = 1208
+    "--core_name=BypassSS_HighLevelLSTM "  #rnn_size = 1146 + (hist_len * k+1) + K = 1208
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
     "--learning_rate=0.0002 "  # default
@@ -137,7 +138,7 @@ cli = (
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1208 "  # 1166 base (1146+16+K=4) + 8 trial records * (16 pre-event h + 4 mode + reward + valid) (when K=2 this makes 1564)
+    "--rnn_size=1224 "  # 1166 base (1146+16+K=4) + 8 trial records * (16 pre-event h + 4 mode + reward + valid) (when K=2 this makes 1564)
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 "
     # "--ppo_clip_ratio=0.25 "
@@ -150,7 +151,7 @@ cli = (
     "--oracle_context=False "  # set to true if stage1 HL_RNN will use oracle to fix z
     "--Decoder_context_mod=enter "
     "--hl_K=2 "
-    "--hl_d_H=16 "
+    "--hl_d_H=8 " # 9 to match 16-dim vanilla RNN (rnn_size=1208 still) for SR, 8 for LSTM (1224).
     # "--hl_tau=1.0 " # current behavior; sweep only after checking outcome-reward scale and mode exploration
     "--hl_history_len=20 "
     #"--hl_multiplicative_input=True "

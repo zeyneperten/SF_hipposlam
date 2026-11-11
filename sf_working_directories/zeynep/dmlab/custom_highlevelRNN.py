@@ -843,3 +843,142 @@ class HighLevelShiftRegister_Learner(nn.Module):
         )
 
         return register_new, z_new, outputs, new_state, log_dict
+
+class HighLevelContextLSTM_Learner(nn.Module):
+    """
+    High-Level Decision Maker with an LSTMCell:
+      - State: (B, 2 * d_H) containing [h (d_H), c (d_H)]
+      - Update: Ticks only on outcome_mask == True via nn.LSTMCell
+      - Decision: head(h) -> Q-values or Policy Logits for the K modes
+    """
+
+    def __init__(
+        self,
+        K: int = 2,
+        d_H: int = 16,
+        tau: float = 1.0,
+        is_policy: bool = False,
+        deterministic: bool = False,
+        representations: bool = False,
+        d_rep: int = 64,
+    ):
+        super().__init__()
+        self.K = K
+        self.d_H = d_H
+        self.tau = tau
+        self.is_policy = is_policy
+        self.deterministic = deterministic
+        self.representations = representations
+        self.d_rep = d_rep
+
+        if self.representations:
+            self.raw_event_dim = K + 1 + (2 * self.d_rep)
+        else:
+            self.raw_event_dim = K + 1
+
+        # The persistent state is [h, c]
+        self.total_state_size = 2 * self.d_H
+
+        # LSTM Cell: (raw_event_dim) -> (h, c)
+        self.lstm_cell = nn.LSTMCell(input_size=self.raw_event_dim, hidden_size=d_H)
+
+        # Decision Head: maps hidden state h (d_H) -> K modes
+        self.head = nn.Linear(d_H, K)
+
+    @property
+    def state_size(self) -> int:
+        return self.total_state_size
+
+    def update_state(
+        self,
+        outcome_mask: Tensor,
+        prev_trial_reward: Tensor,
+        lstm_state: Tensor,
+        z_prev: Tensor,
+        e_trigger=None,
+        e_outcome=None,
+    ) -> Tensor:
+        """
+        Ticks the LSTM cell on completed trial outcomes (outcome_mask == True).
+        Preserves existing (h, c) on navigation frames.
+        """
+        # Unpack [h, c]
+        h_prev, c_prev = torch.split(lstm_state, self.d_H, dim=-1)
+
+        # 1. Format input event
+        if self.representations:
+            if e_trigger is None or e_outcome is None:
+                raise ValueError("representations=True requires both e_trigger and e_outcome")
+            lstm_in = torch.cat([z_prev, prev_trial_reward[:, None], e_trigger, e_outcome], dim=-1)
+        else:
+            lstm_in = torch.cat([z_prev, prev_trial_reward[:, None]], dim=-1)
+
+        # 2. LSTM step
+        h_cand, c_cand = self.lstm_cell(lstm_in, (h_prev, c_prev))
+
+        # 3. Event-driven latching: only tick when a trial finishes
+        h_new = torch.where(outcome_mask[:, None], h_cand, h_prev)
+        c_new = torch.where(outcome_mask[:, None], c_cand, c_prev)
+
+        return torch.cat([h_new, c_new], dim=-1)
+
+    def sample_mode(self, outputs: Tensor) -> Tuple[Tensor, Tensor]:
+        if self.is_policy:
+            log_pi = F.log_softmax(outputs, dim=-1)
+        else:
+            log_pi = F.log_softmax(outputs / self.tau, dim=-1)
+
+        if self.deterministic:
+            z_index = log_pi.argmax(dim=-1)
+        else:
+            z_index = torch.distributions.Categorical(logits=log_pi).sample()
+
+        z_onehot = F.one_hot(z_index, num_classes=self.K).float()
+        return z_onehot, z_index
+
+    def forward(
+        self,
+        outcome_mask: Tensor,
+        prev_trial_reward: Tensor,
+        lstm_state: Tensor,
+        z_prev: Tensor,
+        chosen_arm=None,
+        e_trigger=None,
+        e_outcome=None,
+    ):
+        # 1. Update state [h, c]
+        lstm_state_new = self.update_state(
+            outcome_mask, prev_trial_reward, lstm_state, z_prev, e_trigger, e_outcome
+        )
+
+        # 2. Decision scores from hidden state h
+        h_new, c_new = torch.split(lstm_state_new, self.d_H, dim=-1)
+        outputs = self.head(h_new)
+
+        # 3. Sample candidate mode and latch on outcome
+        z_candidate, z_candidate_index = self.sample_mode(outputs)
+        z_new = torch.where(outcome_mask[:, None], z_candidate, z_prev)
+
+        z_index_prev = z_prev.argmax(dim=-1)
+        z_index_new = torch.where(outcome_mask, z_candidate_index, z_index_prev)
+
+        new_state = {
+            "high_level_h": h_new,
+            "high_level_c": c_new,
+            "lstm_state": lstm_state_new,
+            "current_z": z_new,
+            "current_z_index": z_index_new,
+        }
+
+        log_dict = compute_log_dict(
+            outputs,
+            z_index_new,
+            h_new,
+            prev_trial_reward,
+            self.tau,
+            chosen_arm,
+            K=self.K,
+            is_policy=self.is_policy,
+        )
+
+        return lstm_state_new, z_new, outputs, new_state, log_dict

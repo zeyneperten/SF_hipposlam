@@ -26,8 +26,7 @@ from sf_working_directories.zeynep.dmlab.custom_highlevelRNN import (
 from sf_working_directories.zeynep.dmlab.custom_rnn_boundedfeedback import CustomRNN
 from sf_working_directories.zeynep.dmlab.custom_weights_DGFeedback import generate_shift_register_weights
 from sf_working_directories.zeynep.dmlab.custom_highlevelRNN import HighLevelShiftRegister_Learner as HighLevelShiftRegister
-
-
+from sf_working_directories.zeynep.dmlab.custom_highlevelRNN import HighLevelContextLSTM_Learner
 class FixedRNNSequenceCore(ModelCore):
     def __init__(self, cfg, input_size):
         """
@@ -1234,6 +1233,319 @@ class HighLevelShiftRegisterWrapperCore(ModelCore):
                 out_total_seq = nn.utils.rnn.pack_padded_sequence(out_total_seq, lengths, enforce_sorted=False)
 
             return out_total_seq, new_rnn_states
+class HighLevelLSTMWrapperCore(ModelCore):
+    """
+    High-Level Core with an LSTM.
+    Maintains [h, c] recurrent state, plus a 20-trial buffer for BPTT unrolling.
+    """
+
+    def __init__(self, cfg, input_size):
+        super().__init__(cfg)
+        self.cfg = cfg
+        self.K = getattr(cfg, "hl_K", 2)
+        self.d_H = getattr(cfg, "hl_d_H", 16)
+        self.history_len = getattr(cfg, "hl_history_len", 20)
+        self.representations = getattr(cfg, "hl_representations", False)
+        self.d_rep = getattr(cfg, "hl_d_rep", 64)
+        self.oracle = getattr(cfg, "oracle_context", False)
+        self.is_policy = getattr(cfg, "hl_is_policy", False)
+        self.decoder = None
+
+        hl_tau = getattr(cfg, "hl_tau", 1.0)
+        if hl_tau <= 0:
+            raise ValueError("hl_tau must be positive")
+
+        # 1. High-Level LSTM Learner
+        self.hl_learner = HighLevelContextLSTM_Learner(
+            K=self.K,
+            d_H=self.d_H,
+            tau=hl_tau,
+            is_policy=self.is_policy,
+            deterministic=getattr(cfg, "hl_deterministic", False),
+            representations=self.representations,
+            d_rep=self.d_rep,
+        )
+
+        self.lstm_state_size = self.hl_learner.total_state_size  # 2 * d_H = 32 floats
+        self.raw_event_dim = self.hl_learner.raw_event_dim        # 3 floats
+        self.history_size = self.history_len * self.raw_event_dim # 20 * 3 = 60 floats
+
+        # 2. Base Core
+        base_input_size = input_size - 4
+        if self.oracle:
+            base_input_size -= 1
+
+        self.base_core = SimpleSequenceWithBypassCore(cfg, input_size=base_input_size)
+        self.base_state_size = self.base_core.total_output_size
+
+        # 3. Layout in rnn_states:
+        # [base (base_state_size), [reps], lstm_state (32), history (60), mode (K)]
+        self.rep_size = (2 * self.d_rep) if self.representations else 0
+        self.lstm_start = self.base_state_size + self.rep_size
+        self.history_start = self.lstm_start + self.lstm_state_size
+        self.total_state_size = self.base_state_size + self.rep_size + self.lstm_state_size + self.history_size + self.K
+        self.total_output_size = self.base_core.total_output_size + self.K
+
+        configured_size = getattr(cfg, "rnn_size", None)
+        if configured_size is not None and configured_size != self.total_state_size:
+            raise ValueError(
+                f"rnn_size={configured_size}, but HighLevelLSTMWrapperCore requires {self.total_state_size} "
+                f"(base={self.base_state_size}, lstm={self.lstm_state_size}, history={self.history_size}, mode={self.K})"
+            )
+
+    def get_core_state_size(self):
+        return self.total_state_size
+
+    def get_out_size(self):
+        return self.total_output_size
+
+    def set_decoder(self, decoder):
+        self.decoder = decoder
+
+    def shift_history(self, history, z_prev, prev_trial_reward, outcome_mask, e_trig=None, e_out=None):
+        """Appends the newly completed trial to the history buffer."""
+        B = z_prev.size(0)
+        if self.representations:
+            new_event = torch.cat([z_prev, prev_trial_reward[:, None], e_trig, e_out], dim=-1)
+        else:
+            new_event = torch.cat([z_prev, prev_trial_reward[:, None]], dim=-1)
+
+        reg_3d = history.reshape(B, self.history_len, self.raw_event_dim)
+        shifted = torch.cat([new_event.unsqueeze(1), reg_3d[:, :-1, :]], dim=1)
+        reg_new = torch.where(outcome_mask[:, None, None], shifted, reg_3d)
+        return reg_new.reshape(B, self.history_size)
+
+    def scores_from_history(self, history):
+        """Unrolls the LSTM over the 20 historical trials under current learner weights."""
+        B = history.size(0)
+        lstm_state = history.new_zeros(B, self.lstm_state_size)
+        events = history.reshape(B, self.history_len, self.raw_event_dim)
+
+        # Unroll from oldest (slot 19) to newest (slot 0)
+        for k in reversed(range(self.history_len)):
+            event = events[:, k]
+            z = event[:, : self.K]
+            reward = event[:, self.K]
+            valid = z.sum(dim=-1) > 0.5
+            if self.representations:
+                trig = event[:, self.K + 1 : self.K + 1 + self.d_rep]
+                out = event[:, self.K + 1 + self.d_rep : self.K + 1 + (2 * self.d_rep)]
+                lstm_state = self.hl_learner.update_state(valid, reward, lstm_state, z, trig, out)
+            else:
+                lstm_state = self.hl_learner.update_state(valid, reward, lstm_state, z)
+
+        h, _ = torch.split(lstm_state, self.d_H, dim=-1)
+        return self.hl_learner.head(h)
+
+    def forward(self, head_output, rnn_states):
+        is_packed = isinstance(head_output, PackedSequence)
+        if is_packed:
+            head_output, lengths = pad_packed_sequence(head_output)
+
+        is_bptt = head_output.dim() == 3
+
+        base_states = rnn_states[:, : self.base_state_size]
+
+        if self.representations:
+            rep_start = self.base_state_size
+            e_trig_prev = rnn_states[:, rep_start : rep_start + self.d_rep]
+            e_out_prev = rnn_states[:, rep_start + self.d_rep : rep_start + (2 * self.d_rep)]
+        else:
+            e_trig_prev = None
+            e_out_prev = None
+
+        lstm_prev = rnn_states[:, self.lstm_start : self.lstm_start + self.lstm_state_size]
+        history_prev = rnn_states[:, self.history_start : self.history_start + self.history_size]
+        z_prev = rnn_states[:, -self.K :]
+
+        # =====================================================================
+        # 1. INFERENCE PASS (Acting)
+        # =====================================================================
+        if not is_bptt:
+            base_head_output = head_output[:, :-4]
+            chosen_arm_pulse = head_output[:, -4].long()
+            chosen_arm = head_output[:, -3].long()
+            outcome_mask = head_output[:, -2].bool()
+            prev_trial_reward = head_output[:, -1]
+
+            if self.representations:
+                lstm_new, z_new, _, _, _ = self.hl_learner(
+                    outcome_mask, prev_trial_reward, lstm_prev, z_prev, chosen_arm, e_trig_prev, e_out_prev
+                )
+                history_new = self.shift_history(
+                    history_prev, z_prev, prev_trial_reward, outcome_mask, e_trig_prev, e_out_prev
+                )
+            else:
+                lstm_new, z_new, _, _, _ = self.hl_learner(
+                    outcome_mask, prev_trial_reward, lstm_prev, z_prev, chosen_arm
+                )
+                history_new = self.shift_history(history_prev, z_prev, prev_trial_reward, outcome_mask)
+
+            base_core_out, base_states_new = self.base_core(base_head_output, base_states)
+            coef = getattr(self.cfg, "number_instruction_coef", 200.0)
+            out_total = torch.cat([base_core_out, z_new * coef], dim=-1)
+
+            if self.representations:
+                core_features = out_total[:, : self.decoder.processed_core_size] if hasattr(self.decoder, "processed_core_size") else out_total
+                h_dec_1 = self.decoder.mlp[0](core_features).detach()
+                is_endpoint = chosen_arm_pulse > 0
+                e_out_new = torch.where(is_endpoint[:, None], h_dec_1, e_out_prev)
+                e_trig_new = torch.where(outcome_mask[:, None], h_dec_1, e_trig_prev)
+
+                new_rnn_states = torch.cat(
+                    [base_states_new, e_trig_new, e_out_new, lstm_new, history_new, z_new], dim=-1
+                )
+            else:
+                new_rnn_states = torch.cat([base_states_new, lstm_new, history_new, z_new], dim=-1)
+
+            self.last_hl_loss = torch.tensor(0.0, device=head_output.device)
+            self.last_log_dict = None
+            self.last_hl_metrics = {}
+
+            if is_packed:
+                out_total = nn.utils.rnn.pack_padded_sequence(out_total, lengths, enforce_sorted=False)
+
+            return out_total, new_rnn_states
+
+        # =====================================================================
+        # 2. BPTT PASS (Learner Replay)
+        # =====================================================================
+        else:
+            T, B = head_output.shape[:2]
+            valid_seq = head_output[:, :, -1].bool()
+            actor_z_seq = head_output[:, :, -(self.K + 1) : -1]
+            actor_history_seq = head_output[:, :, -(self.K + self.history_size + 1) : -(self.K + 1)]
+            head_output = head_output[:, :, : -(self.K + self.history_size + 1)]
+
+            lstm_t = lstm_prev
+            history_t = history_prev
+            z_t = z_prev
+            base_states_t = base_states
+
+            out_total_list = []
+            if not self.oracle:
+                outputs_seq = []
+                z_indices_seq = []
+                rewards_seq = []
+                mask_seq = []
+
+            if self.representations:
+                e_trig_t = e_trig_prev
+                e_out_t = e_out_prev
+
+            for t in range(T):
+                base_head_output_t = head_output[t, :, :-4]
+                chosen_arm_pulse_t = head_output[t, :, -4].long()
+                chosen_arm_t = head_output[t, :, -3].long()
+                outcome_mask_t = head_output[t, :, -2].bool()
+                prev_trial_reward_t = head_output[t, :, -1]
+
+                # Unroll LSTM across past 20 trials for decision points
+                if outcome_mask_t.any():
+                    outputs_old = self.scores_from_history(actor_history_seq[t])
+                else:
+                    outputs_old = head_output.new_zeros(B, self.K)
+
+                outputs_seq.append(outputs_old)
+                z_indices_seq.append(z_t.argmax(dim=-1))
+                rewards_seq.append(prev_trial_reward_t)
+                mask_seq.append(outcome_mask_t & (z_t.sum(dim=-1) > 0.5) & valid_seq[t])
+
+                # Advance LSTM state and history
+                if self.representations:
+                    lstm_t = self.hl_learner.update_state(
+                        outcome_mask_t, prev_trial_reward_t, lstm_t, z_t, e_trigger=e_trig_t, e_outcome=e_out_t
+                    )
+                    history_t = self.shift_history(
+                        history_t, z_t, prev_trial_reward_t, outcome_mask_t, e_trig_t, e_out_t
+                    )
+                else:
+                    lstm_t = self.hl_learner.update_state(
+                        outcome_mask_t, prev_trial_reward_t, lstm_t, z_t
+                    )
+                    history_t = self.shift_history(history_t, z_t, prev_trial_reward_t, outcome_mask_t)
+
+                z_t = actor_z_seq[t]
+
+                base_core_out_t, base_states_t = self.base_core(base_head_output_t, base_states_t)
+                coef = getattr(self.cfg, "number_instruction_coef", 200.0)
+                out_total_t = torch.cat([base_core_out_t, z_t * coef], dim=-1)
+
+                if self.representations:
+                    h_dec_1_t = self.decoder.mlp[0](out_total_t).detach()
+                    is_endpoint_t = chosen_arm_pulse_t > 0
+                    e_out_t = torch.where(is_endpoint_t[:, None], h_dec_1_t, e_out_t)
+                    e_trig_t = torch.where(outcome_mask_t[:, None], h_dec_1_t, e_trig_t)
+
+                out_total_list.append(out_total_t)
+
+            out_total_seq = torch.stack(out_total_list, dim=0)
+
+            if self.representations:
+                new_rnn_states = torch.cat([base_states_t, e_trig_t, e_out_t, lstm_t, history_t, z_t], dim=-1)
+            else:
+                new_rnn_states = torch.cat([base_states_t, lstm_t, history_t, z_t], dim=-1)
+
+            # High-Level Loss computation
+            if not self.oracle:
+                outputs_stacked = torch.stack(outputs_seq, dim=0)
+                z_indices_stacked = torch.stack(z_indices_seq, dim=0)
+                rewards_stacked = torch.stack(rewards_seq, dim=0)
+                mask_stacked = torch.stack(mask_seq, dim=0)
+
+                if self.is_policy:
+                    total_loss, metrics = high_level_policy_loss(
+                        logits=outputs_stacked,
+                        z_indices=z_indices_stacked,
+                        rewards=rewards_stacked,
+                        decision_mask=mask_stacked,
+                    )
+                    self.last_hl_metrics = metrics
+                else:
+                    total_loss = q_loss(
+                        scores=outputs_stacked,
+                        z_indices=z_indices_stacked,
+                        rewards=rewards_stacked,
+                        decision_mask=mask_stacked,
+                    )
+                    self.last_hl_metrics = {}
+
+                with torch.no_grad():
+                    valid_rewards = rewards_stacked[mask_stacked]
+                    self.last_hl_metrics.update(
+                        {
+                            "hl/valid_outcomes": valid_rewards.numel(),
+                            "hl/trial_reward_mean": (
+                                valid_rewards.mean().item() if valid_rewards.numel() else 0.0
+                            ),
+                            "hl/trial_reward_abs_max": (
+                                valid_rewards.abs().max().item() if valid_rewards.numel() else 0.0
+                            ),
+                        }
+                    )
+
+                self.last_hl_loss = total_loss
+                with torch.no_grad():
+                    h_end, _ = torch.split(lstm_t, self.d_H, dim=-1)
+                    self.last_log_dict = compute_log_dict(
+                        self.hl_learner.head(h_end),
+                        z_t.argmax(dim=-1),
+                        h_end,
+                        prev_trial_reward_t,
+                        self.hl_learner.tau,
+                        chosen_arm_t,
+                        K=self.K,
+                        is_policy=self.is_policy,
+                    )
+            else:
+                self.last_hl_loss = torch.tensor(0.0, device=head_output.device)
+                self.last_log_dict = None
+                self.last_hl_metrics = {}
+
+            if is_packed:
+                out_total_seq = nn.utils.rnn.pack_padded_sequence(out_total_seq, lengths, enforce_sorted=False)
+
+            return out_total_seq, new_rnn_states
         
 class SimpleSequenceCore(ModelCore):
     def __init__(self, cfg, input_size):
@@ -2367,7 +2679,8 @@ def make_hipposlam_core(cfg: Config, core_input_size: int) -> ModelCore:
             core = HighLevelRNNWrapperCore(cfg, core_input_size)
         elif cfg.core_name == "BypassSS_HighLevelShiftRegister":
             core = HighLevelShiftRegisterWrapperCore(cfg, core_input_size)
-
+        elif cfg.core_name == "BypassSS_HighLevelLSTM":
+            core = HighLevelLSTMWrapperCore(cfg, core_input_size)
     else:
         core = ModelCoreIdentity(cfg, core_input_size)
 

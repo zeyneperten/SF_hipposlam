@@ -56,7 +56,7 @@ def register_dmlab_components(level_caches: Optional[DmlabLevelCaches] = None, c
     global_model_factory().register_model_core_factory(make_hipposlam_core)
     global_model_factory().register_decoder_factory(make_hipposlam_decoder)
 
-    if cfg.core_name in ("BypassSS_HighLevelRNN", "BypassSS_HighLevelShiftRegister"):
+    if cfg.core_name in ("BypassSS_HighLevelRNN", "BypassSS_HighLevelShiftRegister", "BypassSS_HighLevelLSTM"):
         global_model_factory().register_actor_critic_factory(make_hipposlam_actor_critic)
 
     if getattr(cfg, "hl_dg_from_prev_z", False) or getattr(cfg, "hl_init_checkpoint", None):

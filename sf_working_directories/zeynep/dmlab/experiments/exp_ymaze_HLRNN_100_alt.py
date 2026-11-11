@@ -7,14 +7,15 @@ _params = ParamGrid(
         # -------------------------------------------------
         # Seeds
         ("seed", [1111, 2222, 3333, 4444, 5555]),
-        ("number_instruction_coef", [9, 200]),
+        #("number_instruction_coef", [9, 200]),
         # ("reward_scale", [0.01, 0.1, 1.0]),
         # ("learning_rate", [0.00002, 0.0001]),
         # ("seed", [2222]),
         # ("DG_context_mod", ["sigmoid"]), # verify rnn_size
-        ("Decoder_context_mod", ["enter", "FiLM"]),  # verify rnn_size
+        #("Decoder_context_mod", ["enter", "FiLM"]),  # verify rnn_size
         # ("context_injection_coef", [9, 200]),
-        ("hl_tau", [0.2, 0.4]),
+        ("hl_is_policy", [True, False]),
+        ("hl_tau", [0.2]),
     ]
 )
 
@@ -71,7 +72,7 @@ _params = ParamGrid(
 # )
 
 prj = "ymaze_HighLevelRNN_v3_100"
-vstr = "1Q_deterministic_Rew"
+vstr = "1_lstm_pmatched_det"
 
 cli = (
     "--env=ymaze_100_alt2 "  # it has context if wanted to use
@@ -116,7 +117,7 @@ cli = (
     "--env_frameskip=4 "  # lowered from 8
     # "--dmlab_reduced_action_set=True "
     "--dmlab_navigation_action_set=True "
-    "--core_name=BypassSS_HighLevelRNN "  # default was set to ByPassSS or try BypassSS_HighLevelRNN
+    "--core_name=BypassSS_HighLevelLSTM "  # default was set to ByPassSS or try BypassSS_HighLevelRNN
     "--rnn_type=gru "
     "--DG_name=batchnorm_relu "
     "--learning_rate=0.0002 "  # default
@@ -136,7 +137,7 @@ cli = (
     "--normalize_input=False "
     "--Hippo_L=64 "
     "--Hippo_R=8 "
-    "--rnn_size=1324 "  # 1166 base + 8 trial records * (16 pre-event h + 2 mode + reward + valid)
+    "--rnn_size=1224 "  # (1324) 1166 base + 8 trial records * (16 pre-event h + 2 mode + reward + valid)
     # "--exploration_loss_coeff=0.005 "
     # "--value_loss_coeff=0.3 "
     # "--ppo_clip_ratio=0.25 "
@@ -147,17 +148,21 @@ cli = (
     "--reward_input=False "  # add + 1 to rnn size
     "--DG_context_mod=None "
     "--oracle_context=False "  # set to true if stage1 HL_RNN will use oracle to fix z
-    # "--Decoder_context_mod=None "
+    "--Decoder_context_mod=enter "
     "--hl_K=2 "  # MAKE THIS 4 FOR LEARNING Z, 2 FOR ORACLE Z. If 2, then rnn is 1324
-    "--hl_d_H=16 "
+    "--hl_d_H=8 " # 9 to match 16-dim vanilla RNN (rnn_size=1208 still), 8 for LSTM (1224)
     # "--hl_tau=1.0 " # current behavior; sweep only after checking outcome-reward scale and mode exploration
-    "--hl_history_len=8 "
-    "--hl_is_policy=False "  # one-step Q regression on the mode that actually earned each trial reward
+    "--hl_history_len=20 " # when 8, 1324; when 20, 1564"
+    #"--hl_is_policy=False "  # one-step Q regression on the mode that actually earned each trial reward
     # "--hl_diversity_reward_coef=0.01 " # at most 0.01 per completed trial, for controller PPO only
     # "--hl_diversity_include_chosen_arm=True " # include the chosen arm in the classifier input for levels that return to an identical center view at outcome
     "--reward_scale=0.1 "  # default 1 LOWERED BECAUSE OF TOO HIGH VALUE LOSS
     # "--context_injection_coef=200 "
     "--hl_DG_mod=sigmoid "
+    "--hl_dg_from_prev_z=True "
+    #"--hl_use_mlp=True "
+    #"--hl_mlp_dim=16 "
+    #"--hl_multiplicative_input=True "
 )
 
 

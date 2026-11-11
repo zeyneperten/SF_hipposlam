@@ -27,9 +27,9 @@ def prepare_hl_transfer(cfg):
         source = json.load(handle)
 
     # Validate that source was indeed an HLRNN run
-    if source.get("core_name") != "BypassSS_HighLevelRNN":
+    if source.get("core_name") not in ("BypassSS_HighLevelRNN", "BypassSS_HighLevelLSTM", "BypassSS_HighLevelShiftRegister"):
         raise ValueError(
-            f"Expected source core_name='BypassSS_HighLevelRNN', got '{source.get('core_name')}'"
+            f"Unexpected source core_name: {source.get('core_name')}. Expected one of: BypassSS_HighLevelRNN, BypassSS_HighLevelLSTM, BypassSS_HighLevelShiftRegister"
         )
 
     # Inherit core structural parameters to ensure identical tensor dimensions
@@ -62,7 +62,13 @@ def prepare_hl_transfer(cfg):
             cfg.cli_args[key] = value
 
     cfg.hl_transfer_checkpoint = str(checkpoint)
-    cfg.core_name = "BypassSS_HighLevelRNN"
+    if source.get("core_name") == "BypassSS_HighLevelLSTM":
+        cfg.core_name = "BypassSS_HighLevelLSTM"
+    elif source.get("core_name") == "BypassSS_HighLevelShiftRegister":
+        cfg.core_name = "BypassSS_HighLevelShiftRegister"
+    else:
+        cfg.core_name = "BypassSS_HighLevelRNN"
+
     cfg.oracle_context = False
     cfg.hl_dg_from_prev_z = source.get("hl_dg_from_prev_z", True)
 
@@ -72,7 +78,13 @@ def prepare_hl_transfer(cfg):
     rep_size = (2 * cfg.hl_d_rep) if getattr(cfg, "hl_representations", False) else 0
     event_width = cfg.hl_d_H + cfg.hl_K + 2 + rep_size
     history_size = cfg.hl_history_len * event_width
-    cfg.rnn_size = base_size + cfg.hl_d_H + rep_size + history_size + cfg.hl_K
+    if cfg.core_name == "BypassSS_HighLevelLSTM":
+        history_size = 20 * 3
+        cfg.hl_d_H = 8  # override to match the source LSTM's hidden size
+        lstm_state = 2 * cfg.hl_d_H  # hidden + cell
+        cfg.rnn_size = base_size + lstm_state + rep_size + history_size + cfg.hl_K
+    else:
+        cfg.rnn_size = base_size + cfg.hl_d_H + rep_size + history_size + cfg.hl_K
     cfg.cli_args["rnn_size"] = cfg.rnn_size
 
     log.info(
